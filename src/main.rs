@@ -1,12 +1,11 @@
 use std::{
     io::Read,
     num::NonZeroU32,
-    process::{Command, Stdio},
     sync::{Arc, Mutex},
     thread,
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use portable_pty::PtySize;
 use softbuffer::{Context, Surface};
 use winit::{
@@ -18,11 +17,13 @@ use winit::{
 
 use crate::constants::{CELL_H, CELL_W, DEFAULT_COLS, DEFAULT_ROWS};
 
+mod clipboard;
 mod constants;
 mod keys;
 mod pty;
 mod renderer;
 
+use clipboard::read_clipboard_text;
 use constants::*;
 use keys::key_to_pty_bytes;
 use pty::{Pty, spawn_shell};
@@ -105,34 +106,6 @@ fn main() -> Result<()> {
                         return;
                     }
 
-                    if modifiers.control_key() && modifiers.shift_key() {
-                        if let Key::Character(c) = &event.logical_key {
-                            if c == "v" {
-                                let text = if let Ok(output) = Command::new("xclip")
-                                    .args(&["-selection", "clipboard", "-o"])
-                                    .stdout(Stdio::piped())
-                                    .output()
-                                {
-                                    String::from_utf8_lossy(&output.stdout).to_string()
-                                } else if let Ok(output) = Command::new("xsel")
-                                    .args(&["--clipboard", "--output"])
-                                    .stdout(Stdio::piped())
-                                    .output()
-                                {
-                                    String::from_utf8_lossy(&output.stdout).to_string()
-                                } else {
-                                    eprintln!("No clipboard tool (xclip/xsel) found");
-                                    return;
-                                };
-                                if !text.is_empty() {
-                                    pty.write(text.as_bytes());
-                                    surface.window().request_redraw();
-                                }
-                                return;
-                            }
-                        }
-                    }
-
                     if let Key::Named(NamedKey::F12) = &event.logical_key {
                         let styles: [FontStyle; 8] = [
                             FontStyle::Basic,
@@ -171,6 +144,16 @@ fn main() -> Result<()> {
                         }
 
                         surface.window().request_redraw();
+                        return;
+                    }
+
+                    if is_paste_shortcut(&event.logical_key, modifiers) {
+                        if let Some(text) = read_clipboard_text() {
+                            if !text.is_empty() {
+                                pty.write(text.as_bytes());
+                                surface.window().request_redraw();
+                            }
+                        }
                         return;
                     }
 
@@ -228,4 +211,20 @@ fn resize_terminal(
     });
 
     Ok(())
+}
+
+fn is_paste_shortcut(key: &Key, modifiers: ModifiersState) -> bool {
+    if modifiers.control_key() {
+        if let Key::Character(c) = key {
+            return c.eq_ignore_ascii_case("v");
+        }
+    }
+
+    if modifiers.shift_key() {
+        if let Key::Named(NamedKey::Insert) = key {
+            return true;
+        }
+    }
+
+    false
 }

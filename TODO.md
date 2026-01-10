@@ -52,10 +52,10 @@
 - Add scroll wheel support
 - Configurable scrollback size
 
-### 10. Clipboard copy/paste
-- Integrate with system clipboard
-- Handle paste events
-- Support selection + middle-click paste
+### 10. Clipboard copy/paste ✅
+- Integrate with clipboard via `arboard`
+- Paste text on `Ctrl+V` or `Shift+Insert`
+- Keep sending terminal input untouched when clipboard is empty or fails
 
 ### 11. Clickable URLs
 - Regex pattern to detect URLs
