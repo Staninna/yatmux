@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use vt100::Color;
 
-use crate::constants::{DEFAULT_COLS, DEFAULT_ROWS, TAB_STOP_WIDTH};
+use crate::constants::{DEFAULT_COLS, DEFAULT_ROWS, SCROLLBACK_CAPACITY, TAB_STOP_WIDTH};
 use crate::pty::PtyWriter;
 
 /// Data for a single cell: character, foreground color, background color.
@@ -54,7 +54,7 @@ impl Terminal {
         let parser = Arc::new(Mutex::new(vt100::Parser::new(
             DEFAULT_ROWS,
             DEFAULT_COLS,
-            0,
+            SCROLLBACK_CAPACITY,
         )));
         Terminal { parser, pty }
     }
