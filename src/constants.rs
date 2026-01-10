@@ -15,6 +15,7 @@ pub const BACKSPACE_BYTE: u8 = 0x7f;
 pub const NULL_BYTE: u8 = 0x00;
 
 pub const READ_BUFFER_SIZE: usize = 8192;
+pub const TAB_STOP_WIDTH: usize = 8;
 
 #[cfg(test)]
 mod tests {

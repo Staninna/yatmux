@@ -7,6 +7,7 @@ use vt100::Color;
 
 use crate::constants::{
     CELL_H, CELL_W, DEFAULT_BG_COLOR, DEFAULT_FG_COLOR, FONT_SCALE, GLYPH_H, GLYPH_W,
+    TAB_STOP_WIDTH,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +39,13 @@ impl FontStyle {
         }
         get_fallback_glyph(ch)
     }
+}
+
+fn lighten_color(color: u32) -> u32 {
+    let r = ((color >> 16) & 0xff).saturating_add(0x20);
+    let g = ((color >> 8) & 0xff).saturating_add(0x20);
+    let b = (color & 0xff).saturating_add(0x20);
+    ((r.min(0xff) as u32) << 16) | ((g.min(0xff) as u32) << 8) | (b.min(0xff) as u32)
 }
 
 fn get_fallback_glyph(ch: char) -> [u8; 8] {
@@ -90,6 +98,7 @@ impl Renderer {
         fg_color: Color,
         bg_color: Color,
         palette: &Arc<[u32; 256]>,
+        tab_info: Option<(usize, usize)>,
     ) {
         let fg = color_to_u32(fg_color, DEFAULT_FG_COLOR, palette);
         let bg = color_to_u32(bg_color, DEFAULT_BG_COLOR, palette);
@@ -97,13 +106,46 @@ impl Renderer {
         let bg = if invert { fg } else { bg };
         let fg = if invert { bg } else { fg };
 
+        let fill_color = if tab_info.is_some() {
+            lighten_color(bg)
+        } else {
+            bg
+        };
+
         let x0 = col * CELL_W;
         let y0 = row * CELL_H;
 
         for y in y0..(y0 + CELL_H).min(height) {
             for x in x0..(x0 + CELL_W).min(width) {
-                backbuffer[y * width + x] = bg;
+                backbuffer[y * width + x] = fill_color;
             }
+        }
+
+        if let Some((start_col, _)) = tab_info {
+            if start_col == col {
+                let tab_fg = lighten_color(fg);
+                let glyph = font8x8::BASIC_FONTS.get('>').unwrap_or([0; 8]);
+                for gy in 0..GLYPH_H {
+                    let bits = glyph[gy];
+                    for gx in 0..GLYPH_W {
+                        let on = (bits >> gx) & 1 == 1;
+                        if !on {
+                            continue;
+                        }
+
+                        for sy in 0..FONT_SCALE {
+                            for sx in 0..FONT_SCALE {
+                                let x = x0 + gx * FONT_SCALE + sx;
+                                let y = y0 + gy * FONT_SCALE + sy;
+                                if x < width && y < height {
+                                    backbuffer[y * width + x] = tab_fg;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return;
         }
 
         let glyph = self.font_style.get_glyph(ch);
@@ -141,7 +183,7 @@ impl Renderer {
         let buffer_height = buffer.height().get() as usize;
         buffer.fill(DEFAULT_BG_COLOR);
 
-        let (cursor, screen_cells, rows, cols) = {
+        let (cursor, screen_cells, rows, cols, tab_ranges) = {
             let parser = parser
                 .lock()
                 .map_err(|_| anyhow::anyhow!("parser mutex poisoned"))?;
@@ -152,6 +194,7 @@ impl Renderer {
             let cols = buffer_width / CELL_W;
 
             let mut cells = Vec::with_capacity(rows * cols);
+            let mut tab_ranges = vec![None; rows * cols];
             for row in 0..rows {
                 for col in 0..cols {
                     let cell = screen.cell(row as u16, col as u16);
@@ -159,16 +202,26 @@ impl Renderer {
                     let ch = contents.chars().next().unwrap_or(' ');
                     let fg = cell.map(|c| c.fgcolor()).unwrap_or(Color::Default);
                     let bg = cell.map(|c| c.bgcolor()).unwrap_or(Color::Default);
+                    if ch == '\t' {
+                        let end_col = ((col / TAB_STOP_WIDTH) + 1) * TAB_STOP_WIDTH;
+                        let end_col = end_col.min(cols);
+                        for c in col..end_col {
+                            let tab_idx = row * cols + c;
+                            tab_ranges[tab_idx] = Some((col, end_col));
+                        }
+                    }
                     cells.push((ch, fg, bg));
                 }
             }
-            (cursor, cells, rows, cols)
+            (cursor, cells, rows, cols, tab_ranges)
         };
 
         for row in 0..rows {
             for col in 0..cols {
-                let (ch, fg, bg) = screen_cells[row * cols + col];
+                let idx = row * cols + col;
+                let (ch, fg, bg) = screen_cells[idx];
                 let invert = (row as u16, col as u16) == cursor;
+                let tab_info = tab_ranges[idx];
                 self.draw_cell(
                     &mut buffer,
                     buffer_width,
@@ -180,6 +233,7 @@ impl Renderer {
                     fg,
                     bg,
                     palette,
+                    tab_info,
                 );
             }
         }

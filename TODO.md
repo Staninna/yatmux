@@ -36,10 +36,10 @@
 
 ## Hard (1-2 days each)
 
-### 7. Tab support
-- Handle \t escape sequence
-- Track tab stops
-- Render tabs visually
+### 7. Tab support ✅
+- Render `\t` as a highlighted range up to the next tab stop
+- Draw a visual arrow at the leading tab cell
+- Keep tab spacing aligned to 8-column stops
 
 ### 8. Selection with mouse
 - Detect mouse drag events
