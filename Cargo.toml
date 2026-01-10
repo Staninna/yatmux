@@ -1,0 +1,12 @@
+[package]
+name = "term"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+font8x8 = "0.3"
+portable-pty = "0.9"
+softbuffer = "0.4"
+vt100 = "0.15"
+winit = "0.30"
