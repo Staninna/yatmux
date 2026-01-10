@@ -1,43 +1,36 @@
 use std::{
-    io::{Read, Write},
+    io::Read,
     num::NonZeroU32,
     sync::{Arc, Mutex},
     thread,
 };
 
 use anyhow::{Context as _, Result};
-use font8x8::UnicodeFonts as _;
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::PtySize;
 use softbuffer::{Context, Surface};
 use winit::{
     event::{ElementState, Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
-    keyboard::{Key, ModifiersState, NamedKey},
+    keyboard::ModifiersState,
     window::Window,
 };
+
+use crate::constants::{CELL_H, CELL_W, DEFAULT_COLS, DEFAULT_ROWS};
+
+mod constants;
+mod keys;
+mod pty;
+mod renderer;
+
+use constants::*;
+use keys::key_to_pty_bytes;
+use pty::{Pty, spawn_shell};
+use renderer::{color_palette, render};
 
 #[derive(Debug, Clone)]
 enum UserEvent {
     PtyUpdated,
 }
-
-const FONT_SCALE: usize = 2;
-const GLYPH_W: usize = 8;
-const GLYPH_H: usize = 8;
-const CELL_W: usize = GLYPH_W * FONT_SCALE;
-const CELL_H: usize = GLYPH_H * FONT_SCALE;
-
-const DEFAULT_ROWS: u16 = 24;
-const DEFAULT_COLS: u16 = 80;
-
-const DEFAULT_BG_COLOR: u32 = 0x00_10_10_10;
-const DEFAULT_FG_COLOR: u32 = 0x00_D0_D0_D0;
-
-const ESCAPE_BYTE: u8 = 0x1b;
-const BACKSPACE_BYTE: u8 = 0x7f;
-const NULL_BYTE: u8 = 0x00;
-
-const READ_BUFFER_SIZE: usize = 8192;
 
 fn main() -> Result<()> {
     let (pty, pty_reader) = spawn_shell()?;
@@ -50,6 +43,8 @@ fn main() -> Result<()> {
 
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
+
+    let palette = Arc::new(color_palette());
 
     {
         let parser = Arc::clone(&parser);
@@ -80,8 +75,6 @@ fn main() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("softbuffer Surface::new failed: {e:?}"))?;
 
     let mut modifiers = ModifiersState::default();
-
-    let palette = Arc::new(color_palette());
 
     resize_terminal(&mut surface, &parser, &pty)?;
     surface.window().request_redraw();
@@ -164,266 +157,4 @@ fn resize_terminal(
     });
 
     Ok(())
-}
-
-fn render(
-    surface: &mut Surface<winit::event_loop::OwnedDisplayHandle, Window>,
-    parser: &Arc<Mutex<vt100::Parser>>,
-    palette: &Arc<[u32; 256]>,
-) -> Result<()> {
-    let mut buffer = surface
-        .buffer_mut()
-        .map_err(|e| anyhow::anyhow!("softbuffer buffer_mut failed: {e:?}"))?;
-    let buffer_width = buffer.width().get() as usize;
-    let buffer_height = buffer.height().get() as usize;
-    buffer.fill(DEFAULT_BG_COLOR);
-
-    let (cursor, screen_cells, rows, cols) = {
-        let parser = parser
-            .lock()
-            .map_err(|_| anyhow::anyhow!("parser mutex poisoned"))?;
-        let screen = parser.screen();
-        let cursor = screen.cursor_position();
-
-        // Get actual terminal dimensions
-        let rows = buffer_height / CELL_H;
-        let cols = buffer_width / CELL_W;
-
-        // Pre-fetch all cell data to avoid multiple mutex locks
-        let mut cells = Vec::with_capacity(rows * cols);
-        for row in 0..rows {
-            for col in 0..cols {
-                let cell = screen.cell(row as u16, col as u16);
-                let contents = cell.map(|c| c.contents()).unwrap_or_default();
-                let ch = contents.chars().next().unwrap_or(' ');
-                let fg = cell.map(|c| c.fgcolor()).unwrap_or(vt100::Color::Default);
-                let bg = cell.map(|c| c.bgcolor()).unwrap_or(vt100::Color::Default);
-                cells.push((ch, fg, bg));
-            }
-        }
-        (cursor, cells, rows, cols)
-    };
-
-    for row in 0..rows {
-        for col in 0..cols {
-            let (ch, fg, bg) = screen_cells[row * cols + col];
-            let invert = (row as u16, col as u16) == cursor;
-            draw_cell(
-                &mut buffer,
-                buffer_width,
-                buffer_height,
-                row,
-                col,
-                ch,
-                invert,
-                fg,
-                bg,
-                palette,
-            );
-        }
-    }
-
-    buffer
-        .present()
-        .map_err(|e| anyhow::anyhow!("softbuffer present failed: {e:?}"))?;
-    Ok(())
-}
-
-fn color_to_u32(color: vt100::Color, is_default: u32, palette: &[u32; 256]) -> u32 {
-    match color {
-        vt100::Color::Default => is_default,
-        vt100::Color::Idx(n) => palette[n as usize],
-        vt100::Color::Rgb(r, g, b) => 0x00 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32),
-    }
-}
-
-fn color_palette() -> [u32; 256] {
-    let mut palette = [0u32; 256];
-    palette[0] = 0x00_00_00_00;
-    palette[1] = 0x00_80_00_00;
-    palette[2] = 0x00_00_80_00;
-    palette[3] = 0x00_80_80_00;
-    palette[4] = 0x00_00_00_80;
-    palette[5] = 0x00_80_00_80;
-    palette[6] = 0x00_00_FF_FF;
-    palette[7] = 0x00_C0_C0_C0;
-    palette[8] = 0x00_80_80_80;
-    palette[9] = 0x00_FF_00_00;
-    palette[10] = 0x00_00_FF_00;
-    palette[11] = 0x00_FF_FF_00;
-    palette[12] = 0x00_00_00_FF;
-    palette[13] = 0x00_FF_00_FF;
-    palette[14] = 0x00_00_FF_FF;
-    palette[15] = 0x00_FF_FF_FF;
-    for i in 16..24 {
-        let r = 8 + (i - 16) * 10;
-        palette[i] = 0x00 | ((r as u32) << 16) | ((r as u32) << 8) | (r as u32);
-    }
-    for i in 24..232 {
-        let idx = i - 24;
-        let r = 40 + (idx / 36) * 40;
-        let g = 40 + ((idx / 6) % 6) * 40;
-        let b = 40 + (idx % 6) * 40;
-        palette[i] = 0x00 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
-    }
-    for i in 232..256 {
-        let gray = 8 + (i - 232) * 10;
-        palette[i] = 0x00 | ((gray as u32) << 16) | ((gray as u32) << 8) | (gray as u32);
-    }
-    palette
-}
-
-fn draw_cell(
-    backbuffer: &mut [u32],
-    width: usize,
-    height: usize,
-    row: usize,
-    col: usize,
-    ch: char,
-    invert: bool,
-    fg_color: vt100::Color,
-    bg_color: vt100::Color,
-    palette: &Arc<[u32; 256]>,
-) {
-    let default_bg = DEFAULT_BG_COLOR;
-    let default_fg = DEFAULT_FG_COLOR;
-
-    let fg = color_to_u32(fg_color, default_fg, palette);
-    let bg = color_to_u32(bg_color, default_bg, palette);
-
-    let bg = if invert { fg } else { bg };
-    let fg = if invert { bg } else { fg };
-
-    let x0 = col * CELL_W;
-    let y0 = row * CELL_H;
-
-    for y in y0..(y0 + CELL_H).min(height) {
-        for x in x0..(x0 + CELL_W).min(width) {
-            backbuffer[y * width + x] = bg;
-        }
-    }
-
-    let glyph = font8x8::BASIC_FONTS.get(ch).unwrap_or([0; 8]);
-    for gy in 0..GLYPH_H {
-        let bits = glyph[gy];
-        for gx in 0..GLYPH_W {
-            let on = (bits >> gx) & 1 == 1;
-            if !on {
-                continue;
-            }
-
-            for sy in 0..FONT_SCALE {
-                for sx in 0..FONT_SCALE {
-                    let x = x0 + gx * FONT_SCALE + sx;
-                    let y = y0 + gy * FONT_SCALE + sy;
-                    if x < width && y < height {
-                        backbuffer[y * width + x] = fg;
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn key_to_pty_bytes(key: &Key, mods: ModifiersState) -> Option<Vec<u8>> {
-    let ctrl = mods.control_key();
-
-    match key {
-        Key::Named(NamedKey::Enter) => Some(b"\r".to_vec()),
-        Key::Named(NamedKey::Tab) => Some(b"\t".to_vec()),
-        Key::Named(NamedKey::Space) => {
-            if ctrl {
-                Some(vec![NULL_BYTE])
-            } else {
-                Some(b" ".to_vec())
-            }
-        }
-        Key::Named(NamedKey::Backspace) => Some(vec![BACKSPACE_BYTE]),
-        Key::Named(NamedKey::Escape) => Some(vec![ESCAPE_BYTE]),
-        Key::Named(NamedKey::ArrowUp) => Some([ESCAPE_BYTE, b'[', b'A'].to_vec()),
-        Key::Named(NamedKey::ArrowDown) => Some([ESCAPE_BYTE, b'[', b'B'].to_vec()),
-        Key::Named(NamedKey::ArrowRight) => Some([ESCAPE_BYTE, b'[', b'C'].to_vec()),
-        Key::Named(NamedKey::ArrowLeft) => Some([ESCAPE_BYTE, b'[', b'D'].to_vec()),
-        Key::Named(NamedKey::Home) => Some([ESCAPE_BYTE, b'H'].to_vec()),
-        Key::Named(NamedKey::End) => Some([ESCAPE_BYTE, b'F'].to_vec()),
-        Key::Named(NamedKey::PageUp) => Some([ESCAPE_BYTE, b'[', b'5', b'~'].to_vec()),
-        Key::Named(NamedKey::PageDown) => Some([ESCAPE_BYTE, b'[', b'6', b'~'].to_vec()),
-        Key::Named(NamedKey::Delete) => Some([ESCAPE_BYTE, b'[', b'3', b'~'].to_vec()),
-        Key::Character(s) => {
-            let mut chars = s.chars();
-            let ch = chars.next()?;
-            if chars.next().is_some() {
-                return Some(s.as_bytes().to_vec());
-            }
-            if ctrl {
-                let c = ch.to_ascii_lowercase() as u8;
-                if (b'a'..=b'z').contains(&c) {
-                    return Some(vec![c - b'a' + 1]);
-                }
-            }
-            Some(ch.to_string().into_bytes())
-        }
-        _ => None,
-    }
-}
-
-struct Pty {
-    master: Mutex<Box<dyn portable_pty::MasterPty + Send>>,
-    writer: Mutex<Box<dyn Write + Send>>,
-    _child: Box<dyn portable_pty::Child + Send + Sync>,
-}
-
-impl Pty {
-    fn write(&self, bytes: &[u8]) {
-        if let Ok(mut writer) = self.writer.lock() {
-            let _ = writer.write_all(bytes);
-            let _ = writer.flush();
-        }
-    }
-
-    fn resize(&self, size: PtySize) {
-        if let Ok(master) = self.master.lock() {
-            let _ = master.resize(size);
-        }
-    }
-}
-
-fn spawn_shell() -> Result<(Pty, Box<dyn Read + Send>)> {
-    let pty_system = native_pty_system();
-    let pair = pty_system
-        .openpty(PtySize {
-            rows: DEFAULT_ROWS,
-            cols: DEFAULT_COLS,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .context("openpty")?;
-
-    let mut cmd = CommandBuilder::new(default_shell());
-    cmd.env("TERM", "xterm-256color");
-
-    let child = pair.slave.spawn_command(cmd).context("spawn shell")?;
-
-    let writer = pair.master.take_writer().context("take_writer")?;
-    let reader = pair.master.try_clone_reader().context("clone_reader")?;
-
-    Ok((
-        Pty {
-            master: Mutex::new(pair.master),
-            writer: Mutex::new(writer),
-            _child: child,
-        },
-        reader,
-    ))
-}
-
-fn default_shell() -> String {
-    #[cfg(windows)]
-    {
-        "powershell.exe".to_string()
-    }
-    #[cfg(not(windows))]
-    {
-        std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string())
-    }
 }
