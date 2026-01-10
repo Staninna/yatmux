@@ -118,8 +118,29 @@ fn main() -> Result<()> {
                         let current = renderer.font_style();
                         let current_idx = styles.iter().position(|&s| s == current).unwrap_or(0);
                         let next_idx = (current_idx + 1) % styles.len();
-                        renderer.set_font_style(styles[next_idx]);
-                        eprintln!("Font switched to: {:?}", styles[next_idx]);
+                        let new_style = styles[next_idx];
+                        renderer.set_font_style(new_style);
+
+                        eprintln!("Font switched to: {:?}", new_style);
+
+                        match new_style {
+                            FontStyle::BoxDrawing => {
+                                pty.write(b"+---+\r\n|   |\r\n+---+\r\n");
+                            }
+                            FontStyle::Greek => {
+                                pty.write(b"alpha beta gamma delta epsilon\r\n");
+                            }
+                            FontStyle::Block => {
+                                pty.write(b"blocks test mode\r\n");
+                            }
+                            FontStyle::Hiragana => {
+                                pty.write(b"hiragana test mode\r\n");
+                            }
+                            _ => {
+                                pty.write(b"switched font mode\r\n");
+                            }
+                        }
+
                         surface.window().request_redraw();
                         return;
                     }
