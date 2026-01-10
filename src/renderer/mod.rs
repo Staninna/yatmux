@@ -9,7 +9,6 @@ mod scrollback;
 mod selection;
 
 pub use color::create_palette;
-pub use font::FontStyle;
 
 use std::sync::{Arc, Mutex};
 
@@ -29,7 +28,6 @@ use selection::SelectionManager;
 
 /// The main terminal renderer.
 pub struct Renderer {
-    font_style: FontStyle,
     selection: SelectionManager,
     scrollback: ScrollbackBuffer,
     view_rows: usize,
@@ -46,22 +44,11 @@ impl Renderer {
     /// Creates a new renderer with default settings.
     pub fn new() -> Self {
         Renderer {
-            font_style: FontStyle::default(),
             selection: SelectionManager::new(),
             scrollback: ScrollbackBuffer::new(),
             view_rows: 0,
             view_cols: 0,
         }
-    }
-
-    /// Sets the font style for rendering.
-    pub fn set_font_style(&mut self, style: FontStyle) {
-        self.font_style = style;
-    }
-
-    /// Returns the current font style.
-    pub fn font_style(&self) -> FontStyle {
-        self.font_style
     }
 
     /// Updates the view dimensions.
@@ -131,7 +118,7 @@ impl Renderer {
         }
 
         // Draw character glyph
-        let glyph = self.font_style.get_glyph(ch);
+        let glyph = font::get_glyph(ch);
         self.draw_glyph(backbuffer, width, height, x0, y0, glyph, fg);
     }
 
@@ -187,6 +174,10 @@ impl Renderer {
 
         // Push current rows to scrollback
         self.scrollback.push_rows(&rows_data);
+
+        // Update selection with current scroll state
+        self.selection
+            .set_scroll_state(self.scrollback.offset(), self.scrollback.len());
 
         // Get display rows (either from scrollback or live data)
         let display_rows = self
@@ -342,15 +333,8 @@ mod tests {
 
     #[test]
     fn test_renderer_default() {
-        let renderer = Renderer::new();
-        assert_eq!(renderer.font_style(), FontStyle::Basic);
-    }
-
-    #[test]
-    fn test_renderer_set_font_style() {
-        let mut renderer = Renderer::new();
-        renderer.set_font_style(FontStyle::BoxDrawing);
-        assert_eq!(renderer.font_style(), FontStyle::BoxDrawing);
+        let _renderer = Renderer::new();
+        // Just verify construction works
     }
 
     #[test]

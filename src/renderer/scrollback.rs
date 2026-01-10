@@ -152,7 +152,6 @@ impl ScrollbackBuffer {
     }
 
     /// Returns the number of rows in the buffer.
-    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.buffer.len()
     }
