@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result};
+use arboard::Clipboard;
 use portable_pty::PtySize;
 use softbuffer::{Context, Surface};
 use winit::{
@@ -102,6 +103,20 @@ fn main() -> Result<()> {
                 WindowEvent::KeyboardInput { event, .. } => {
                     if event.state != ElementState::Pressed {
                         return;
+                    }
+
+                    if modifiers.control_key() && modifiers.shift_key() {
+                        if let Key::Character(c) = &event.logical_key {
+                            if c == "v" {
+                                if let Ok(mut clipboard) = Clipboard::new() {
+                                    if let Ok(text) = clipboard.get_text() {
+                                        pty.write(text.as_bytes());
+                                        surface.window().request_redraw();
+                                    }
+                                }
+                                return;
+                            }
+                        }
                     }
 
                     if let Key::Named(NamedKey::F12) = &event.logical_key {

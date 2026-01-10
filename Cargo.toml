@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
+arboard = "3"
 font8x8 = "0.3"
 portable-pty = "0.9"
 softbuffer = "0.4"
