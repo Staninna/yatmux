@@ -161,35 +161,34 @@ fn render(
     let buffer_height = buffer.height().get() as usize;
     buffer.fill(0x00_10_10_10);
 
-    let (contents, cursor, screen_cells) = {
+    let (cursor, screen_cells, rows, cols) = {
         let parser = parser.lock().unwrap();
         let screen = parser.screen();
-        let contents = screen.contents();
         let cursor = screen.cursor_position();
 
-        // Pre-fetch all cell data to avoid multiple mutex locks
+        // Get actual terminal dimensions
         let rows = buffer_height / CELL_H;
         let cols = buffer_width / CELL_W;
+
+        // Pre-fetch all cell data to avoid multiple mutex locks
         let mut cells = Vec::with_capacity(rows * cols);
         for row in 0..rows {
             for col in 0..cols {
                 let cell = screen.cell(row as u16, col as u16);
+                let contents = cell.map(|c| c.contents()).unwrap_or_default();
+                let ch = contents.chars().next().unwrap_or(' ');
                 let fg = cell.map(|c| c.fgcolor()).unwrap_or(vt100::Color::Default);
                 let bg = cell.map(|c| c.bgcolor()).unwrap_or(vt100::Color::Default);
-                cells.push((fg, bg));
+                cells.push((ch, fg, bg));
             }
         }
-        (contents, cursor, cells)
+        (cursor, cells, rows, cols)
     };
-
-    let rows = buffer_height / CELL_H;
-    let cols = buffer_width / CELL_W;
 
     for row in 0..rows {
         for col in 0..cols {
-            let ch = contents.chars().nth(row * 80 + col).unwrap_or(' ');
+            let (ch, fg, bg) = screen_cells[row * cols + col];
             let invert = (row as u16, col as u16) == cursor;
-            let (fg, bg) = screen_cells[row * cols + col];
             draw_cell(
                 &mut buffer,
                 buffer_width,
