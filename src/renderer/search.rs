@@ -4,10 +4,10 @@
 
 use crate::renderer::scrollback::RowSnapshot;
 
-/// A match location in the display.
+/// A match location in the scrollback buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchMatch {
-    /// Row index in the display (0 = top of visible area).
+    /// Absolute row index in the combined buffer (history + live).
     pub row: usize,
     /// Starting column of the match.
     pub start_col: usize,
@@ -21,7 +21,7 @@ pub struct SearchState {
     active: bool,
     /// Current search query.
     query: String,
-    /// All matches found in current view.
+    /// All matches found in the entire scrollback + live buffer.
     matches: Vec<SearchMatch>,
     /// Index of the currently selected match.
     current_match: usize,
@@ -131,9 +131,14 @@ impl SearchState {
         }
     }
 
-    /// Updates the matches based on current query and display rows.
-    /// Call this each frame with the currently displayed rows.
-    pub fn update_matches(&mut self, display_rows: &[RowSnapshot]) {
+    /// Returns the absolute row of the current match (for scrolling to it).
+    pub fn current_match_row(&self) -> Option<usize> {
+        self.current_match().map(|m| m.row)
+    }
+
+    /// Updates the matches based on current query and ALL rows (history + live).
+    /// Call this when the query changes or when significant content changes.
+    pub fn update_matches(&mut self, all_rows: &[RowSnapshot]) {
         self.matches.clear();
 
         if self.query.is_empty() {
@@ -146,7 +151,7 @@ impl SearchState {
             self.query.to_lowercase()
         };
 
-        for (row_idx, row) in display_rows.iter().enumerate() {
+        for (row_idx, row) in all_rows.iter().enumerate() {
             self.find_matches_in_row(row, row_idx, &query);
         }
 
@@ -181,10 +186,13 @@ impl SearchState {
     }
 
     /// Checks if a cell is part of a match.
+    /// `display_row` is the row index in the current display (0 = top of visible area).
+    /// `view_start` is the absolute index of the first visible row.
     /// Returns Some(true) if it's the current match, Some(false) if it's another match, None if not a match.
-    pub fn is_match(&self, row: usize, col: usize) -> Option<bool> {
+    pub fn is_match(&self, display_row: usize, col: usize, view_start: usize) -> Option<bool> {
+        let absolute_row = view_start + display_row;
         for (i, m) in self.matches.iter().enumerate() {
-            if m.row == row && col >= m.start_col && col < m.end_col {
+            if m.row == absolute_row && col >= m.start_col && col < m.end_col {
                 return Some(i == self.current_match);
             }
         }
@@ -334,10 +342,11 @@ mod tests {
         state.update_matches(&display_rows);
 
         // "world" starts at col 6
-        assert!(state.is_match(0, 5).is_none()); // 'o' before world
-        assert_eq!(state.is_match(0, 6), Some(true)); // 'w' - current match
-        assert_eq!(state.is_match(0, 10), Some(true)); // 'd' - still in match
-        assert!(state.is_match(0, 11).is_none()); // Past match
+        // view_start=0 means display row 0 = absolute row 0
+        assert!(state.is_match(0, 5, 0).is_none()); // 'o' before world
+        assert_eq!(state.is_match(0, 6, 0), Some(true)); // 'w' - current match
+        assert_eq!(state.is_match(0, 10, 0), Some(true)); // 'd' - still in match
+        assert!(state.is_match(0, 11, 0).is_none()); // Past match
     }
 
     #[test]
@@ -371,5 +380,60 @@ mod tests {
 
         state.pop_char();
         assert_eq!(state.query(), "te");
+    }
+
+    #[test]
+    fn test_search_with_history() {
+        // Simulate searching through history + live rows
+        let mut state = SearchState::new();
+        state.activate();
+        state.push_char('t');
+        state.push_char('e');
+        state.push_char('s');
+        state.push_char('t');
+
+        // Simulate: 2 history rows + 2 live rows
+        let all_rows = vec![
+            make_row("history test 1"), // row 0 (history)
+            make_row("history row 2"),  // row 1 (history)
+            make_row("live test 2"),    // row 2 (live)
+            make_row("live row"),       // row 3 (live)
+        ];
+
+        state.update_matches(&all_rows);
+
+        // Should find "test" in rows 0 and 2
+        assert_eq!(state.match_count(), 2);
+        assert_eq!(state.matches()[0].row, 0); // history row
+        assert_eq!(state.matches()[1].row, 2); // live row
+
+        // Test is_match with view_start
+        // If view shows rows 1-3 (view_start=1), display row 0 = absolute row 1
+        assert!(state.is_match(0, 8, 1).is_none()); // display row 0 = abs row 1, no match
+        assert_eq!(state.is_match(1, 5, 1), Some(false)); // display row 1 = abs row 2, has "test"
+
+        // Navigate to next match
+        state.next_match();
+        assert_eq!(state.current_match_index(), 1);
+        assert_eq!(state.current_match_row(), Some(2));
+    }
+
+    #[test]
+    fn test_search_current_match_row() {
+        let mut state = SearchState::new();
+        state.activate();
+        state.push_char('a');
+
+        let all_rows = vec![
+            make_row("row a"), // row 0
+            make_row("row b"), // row 1
+            make_row("row a"), // row 2
+        ];
+
+        state.update_matches(&all_rows);
+        assert_eq!(state.current_match_row(), Some(0));
+
+        state.next_match();
+        assert_eq!(state.current_match_row(), Some(2));
     }
 }
