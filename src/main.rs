@@ -11,7 +11,7 @@ use softbuffer::{Context, Surface};
 use winit::{
     event::{ElementState, Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
-    keyboard::ModifiersState,
+    keyboard::{Key, ModifiersState},
     window::Window,
 };
 
@@ -25,7 +25,7 @@ mod renderer;
 use constants::*;
 use keys::key_to_pty_bytes;
 use pty::{Pty, spawn_shell};
-use renderer::{Renderer, color_palette};
+use renderer::{FontStyle, Renderer, color_palette};
 
 #[derive(Debug, Clone)]
 enum UserEvent {
@@ -45,7 +45,7 @@ fn main() -> Result<()> {
     let proxy = event_loop.create_proxy();
 
     let palette = Arc::new(color_palette());
-    let renderer = Renderer::new();
+    let mut renderer = Renderer::new();
 
     {
         let parser = Arc::clone(&parser);
@@ -117,6 +117,30 @@ fn main() -> Result<()> {
                     if let Some(bytes) = key_to_pty_bytes(&event.logical_key, modifiers) {
                         pty.write(&bytes);
                         surface.window().request_redraw();
+                    }
+
+                    if modifiers.alt_key() {
+                        if let Key::Character(c) = &event.logical_key {
+                            if c == "f" {
+                                let styles: [FontStyle; 8] = [
+                                    FontStyle::Basic,
+                                    FontStyle::BoxDrawing,
+                                    FontStyle::Block,
+                                    FontStyle::Greek,
+                                    FontStyle::Hiragana,
+                                    FontStyle::Latin,
+                                    FontStyle::Misc,
+                                    FontStyle::Sga,
+                                ];
+                                let current = renderer.font_style();
+                                let current_idx =
+                                    styles.iter().position(|&s| s == current).unwrap_or(0);
+                                let next_idx = (current_idx + 1) % styles.len();
+                                renderer.set_font_style(styles[next_idx]);
+                                surface.window().request_redraw();
+                                return;
+                            }
+                        }
                     }
                 }
                 _ => {}
