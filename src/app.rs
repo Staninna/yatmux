@@ -279,8 +279,6 @@ impl App {
 
     /// Handles keyboard input when search mode is active.
     fn handle_search_keyboard(&mut self, event: &winit::event::KeyEvent) {
-        let live_rows = self.get_live_rows();
-
         match &event.logical_key {
             Key::Named(NamedKey::Escape) => {
                 self.renderer.deactivate_search();
@@ -294,7 +292,7 @@ impl App {
                 self.request_redraw();
             }
             Key::Named(NamedKey::Backspace) => {
-                self.renderer.search_pop_char(&live_rows);
+                self.renderer.search_pop_char();
                 self.request_redraw();
             }
             Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowLeft) => {
@@ -308,24 +306,17 @@ impl App {
             Key::Character(s) => {
                 // Handle Ctrl+C to toggle case sensitivity
                 if self.input.modifiers.control_key() && s.eq_ignore_ascii_case("c") {
-                    self.renderer.search_toggle_case(&live_rows);
+                    self.renderer.search_toggle_case();
                 } else if !self.input.modifiers.control_key() && !self.input.modifiers.alt_key() {
                     // Regular character input
                     for ch in s.chars() {
-                        self.renderer.search_push_char(ch, &live_rows);
+                        self.renderer.search_push_char(ch);
                     }
                 }
                 self.request_redraw();
             }
             _ => {}
         }
-    }
-
-    /// Gets the current live terminal rows for search.
-    fn get_live_rows(&self) -> Vec<term::renderer::scrollback::RowSnapshot> {
-        // This is a simplified version - in reality we'd get this from the parser
-        // For now, return empty vec as the scrollback buffer has the data
-        Vec::new()
     }
 
     /// Executes a configured action.

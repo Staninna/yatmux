@@ -2,12 +2,12 @@
 //!
 //! Provides search within terminal history with match highlighting.
 
-use crate::renderer::scrollback::{RowSnapshot, ScrollbackBuffer};
+use crate::renderer::scrollback::RowSnapshot;
 
-/// A match location in the scrollback buffer.
+/// A match location in the display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchMatch {
-    /// Row index in the scrollback buffer.
+    /// Row index in the display (0 = top of visible area).
     pub row: usize,
     /// Starting column of the match.
     pub start_col: usize,
@@ -21,7 +21,7 @@ pub struct SearchState {
     active: bool,
     /// Current search query.
     query: String,
-    /// All matches found.
+    /// All matches found in current view.
     matches: Vec<SearchMatch>,
     /// Index of the currently selected match.
     current_match: usize,
@@ -73,42 +73,19 @@ impl SearchState {
         &self.query
     }
 
-    /// Sets the search query and updates matches.
-    pub fn set_query(
-        &mut self,
-        query: &str,
-        scrollback: &ScrollbackBuffer,
-        live_rows: &[RowSnapshot],
-    ) {
-        self.query = query.to_string();
-        self.update_matches(scrollback, live_rows);
-    }
-
     /// Appends a character to the query.
-    pub fn push_char(
-        &mut self,
-        ch: char,
-        scrollback: &ScrollbackBuffer,
-        live_rows: &[RowSnapshot],
-    ) {
+    pub fn push_char(&mut self, ch: char) {
         self.query.push(ch);
-        self.update_matches(scrollback, live_rows);
     }
 
     /// Removes the last character from the query.
-    pub fn pop_char(&mut self, scrollback: &ScrollbackBuffer, live_rows: &[RowSnapshot]) {
+    pub fn pop_char(&mut self) {
         self.query.pop();
-        self.update_matches(scrollback, live_rows);
     }
 
     /// Toggles case sensitivity.
-    pub fn toggle_case_sensitive(
-        &mut self,
-        scrollback: &ScrollbackBuffer,
-        live_rows: &[RowSnapshot],
-    ) {
+    pub fn toggle_case_sensitive(&mut self) {
         self.case_sensitive = !self.case_sensitive;
-        self.update_matches(scrollback, live_rows);
     }
 
     /// Returns whether search is case-sensitive.
@@ -154,10 +131,10 @@ impl SearchState {
         }
     }
 
-    /// Updates the matches based on current query.
-    fn update_matches(&mut self, scrollback: &ScrollbackBuffer, live_rows: &[RowSnapshot]) {
+    /// Updates the matches based on current query and display rows.
+    /// Call this each frame with the currently displayed rows.
+    pub fn update_matches(&mut self, display_rows: &[RowSnapshot]) {
         self.matches.clear();
-        self.current_match = 0;
 
         if self.query.is_empty() {
             return;
@@ -169,18 +146,13 @@ impl SearchState {
             self.query.to_lowercase()
         };
 
-        // Search in scrollback buffer
-        let scrollback_len = scrollback.len();
-        for row_idx in 0..scrollback_len {
-            if let Some(row) = scrollback.get_row(row_idx) {
-                self.find_matches_in_row(&row, row_idx, &query);
-            }
+        for (row_idx, row) in display_rows.iter().enumerate() {
+            self.find_matches_in_row(row, row_idx, &query);
         }
 
-        // Search in live rows (after scrollback)
-        for (i, row) in live_rows.iter().enumerate() {
-            let row_idx = scrollback_len + i;
-            self.find_matches_in_row(row, row_idx, &query);
+        // Clamp current_match to valid range
+        if !self.matches.is_empty() && self.current_match >= self.matches.len() {
+            self.current_match = self.matches.len() - 1;
         }
     }
 
@@ -257,15 +229,19 @@ mod tests {
     fn test_search_find_matches() {
         let mut state = SearchState::new();
         state.activate();
+        state.push_char('h');
+        state.push_char('e');
+        state.push_char('l');
+        state.push_char('l');
+        state.push_char('o');
 
-        let scrollback = ScrollbackBuffer::new();
-        let live_rows = vec![
+        let display_rows = vec![
             make_row("hello world"),
             make_row("hello again"),
             make_row("goodbye"),
         ];
 
-        state.set_query("hello", &scrollback, &live_rows);
+        state.update_matches(&display_rows);
 
         assert_eq!(state.match_count(), 2);
         assert_eq!(state.matches()[0].row, 0);
@@ -278,11 +254,15 @@ mod tests {
     fn test_search_case_insensitive() {
         let mut state = SearchState::new();
         state.activate();
+        state.push_char('h');
+        state.push_char('e');
+        state.push_char('l');
+        state.push_char('l');
+        state.push_char('o');
 
-        let scrollback = ScrollbackBuffer::new();
-        let live_rows = vec![make_row("Hello World"), make_row("HELLO WORLD")];
+        let display_rows = vec![make_row("Hello World"), make_row("HELLO WORLD")];
 
-        state.set_query("hello", &scrollback, &live_rows);
+        state.update_matches(&display_rows);
 
         assert_eq!(state.match_count(), 2);
     }
@@ -291,16 +271,20 @@ mod tests {
     fn test_search_case_sensitive() {
         let mut state = SearchState::new();
         state.activate();
+        state.toggle_case_sensitive();
+        state.push_char('h');
+        state.push_char('e');
+        state.push_char('l');
+        state.push_char('l');
+        state.push_char('o');
 
-        let scrollback = ScrollbackBuffer::new();
-        let live_rows = vec![
+        let display_rows = vec![
             make_row("Hello World"),
             make_row("HELLO WORLD"),
             make_row("hello world"),
         ];
 
-        state.toggle_case_sensitive(&scrollback, &live_rows);
-        state.set_query("hello", &scrollback, &live_rows);
+        state.update_matches(&display_rows);
 
         assert_eq!(state.match_count(), 1);
         assert_eq!(state.matches()[0].row, 2);
@@ -310,11 +294,14 @@ mod tests {
     fn test_search_navigation() {
         let mut state = SearchState::new();
         state.activate();
+        state.push_char('t');
+        state.push_char('e');
+        state.push_char('s');
+        state.push_char('t');
 
-        let scrollback = ScrollbackBuffer::new();
-        let live_rows = vec![make_row("test one test two test three")];
+        let display_rows = vec![make_row("test one test two test three")];
 
-        state.set_query("test", &scrollback, &live_rows);
+        state.update_matches(&display_rows);
 
         assert_eq!(state.match_count(), 3);
         assert_eq!(state.current_match_index(), 0);
@@ -336,11 +323,15 @@ mod tests {
     fn test_search_is_match() {
         let mut state = SearchState::new();
         state.activate();
+        state.push_char('w');
+        state.push_char('o');
+        state.push_char('r');
+        state.push_char('l');
+        state.push_char('d');
 
-        let scrollback = ScrollbackBuffer::new();
-        let live_rows = vec![make_row("hello world")];
+        let display_rows = vec![make_row("hello world")];
 
-        state.set_query("world", &scrollback, &live_rows);
+        state.update_matches(&display_rows);
 
         // "world" starts at col 6
         assert!(state.is_match(0, 5).is_none()); // 'o' before world
@@ -353,11 +344,13 @@ mod tests {
     fn test_search_multiple_matches_same_line() {
         let mut state = SearchState::new();
         state.activate();
+        state.push_char('a');
+        state.push_char('b');
+        state.push_char('c');
 
-        let scrollback = ScrollbackBuffer::new();
-        let live_rows = vec![make_row("abcabcabc")];
+        let display_rows = vec![make_row("abcabcabc")];
 
-        state.set_query("abc", &scrollback, &live_rows);
+        state.update_matches(&display_rows);
 
         assert_eq!(state.match_count(), 3);
         assert_eq!(state.matches()[0].start_col, 0);
@@ -370,18 +363,13 @@ mod tests {
         let mut state = SearchState::new();
         state.activate();
 
-        let scrollback = ScrollbackBuffer::new();
-        let live_rows = vec![make_row("testing")];
-
-        state.push_char('t', &scrollback, &live_rows);
-        state.push_char('e', &scrollback, &live_rows);
-        state.push_char('s', &scrollback, &live_rows);
+        state.push_char('t');
+        state.push_char('e');
+        state.push_char('s');
 
         assert_eq!(state.query(), "tes");
-        assert_eq!(state.match_count(), 1);
 
-        state.pop_char(&scrollback, &live_rows);
+        state.pop_char();
         assert_eq!(state.query(), "te");
-        assert_eq!(state.match_count(), 1);
     }
 }

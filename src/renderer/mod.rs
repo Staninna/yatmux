@@ -220,6 +220,11 @@ impl Renderer {
             .get_display_rows(cols)
             .unwrap_or_else(|| rows_data.clone());
 
+        // Update search matches for current display rows
+        if self.search.is_active() {
+            self.search.update_matches(&display_rows);
+        }
+
         // Detect URLs in each row
         for (row_idx, row_data) in display_rows.iter().enumerate().take(rows) {
             let text: String = row_data.cells.iter().map(|(ch, _, _)| ch).collect();
@@ -241,17 +246,8 @@ impl Renderer {
                 let is_url = self.urls.is_url(row_idx, col);
                 let is_url_hovered = self.urls.is_hovered(row_idx, col);
 
-                // Calculate absolute row for search matching
-                let scroll_offset = self.scrollback.offset();
-                let scrollback_len = self.scrollback.len();
-                let absolute_row = if scroll_offset > 0 {
-                    // When scrolled back, we're viewing historical rows
-                    scrollback_len.saturating_sub(self.view_rows + scroll_offset) + row_idx
-                } else {
-                    // When at live view, we're at the end of scrollback
-                    scrollback_len.saturating_sub(self.view_rows) + row_idx
-                };
-                let search_match = self.search.is_match(absolute_row, col);
+                // Search match is based on display row index directly
+                let search_match = self.search.is_match(row_idx, col);
 
                 self.draw_cell(
                     &mut buffer,
@@ -521,13 +517,13 @@ impl Renderer {
     }
 
     /// Appends a character to the search query.
-    pub fn search_push_char(&mut self, ch: char, live_rows: &[RowSnapshot]) {
-        self.search.push_char(ch, &self.scrollback, live_rows);
+    pub fn search_push_char(&mut self, ch: char) {
+        self.search.push_char(ch);
     }
 
     /// Removes the last character from the search query.
-    pub fn search_pop_char(&mut self, live_rows: &[RowSnapshot]) {
-        self.search.pop_char(&self.scrollback, live_rows);
+    pub fn search_pop_char(&mut self) {
+        self.search.pop_char();
     }
 
     /// Moves to the next search match.
@@ -543,33 +539,16 @@ impl Renderer {
     }
 
     /// Scrolls to make the current search match visible.
+    /// With the simplified search model, matches are always on currently visible rows,
+    /// so this is now a no-op. Kept for API compatibility.
     fn scroll_to_current_match(&mut self) {
-        if let Some(m) = self.search.current_match() {
-            let scrollback_len = self.scrollback.len();
-            let view_rows = self.view_rows;
-
-            // Calculate the scroll offset needed to show this match
-            // The match row is an absolute row in the buffer
-            if m.row < scrollback_len.saturating_sub(view_rows) {
-                // Match is in scrollback history, need to scroll up
-                let target_offset = scrollback_len.saturating_sub(m.row + view_rows);
-                let current_offset = self.scrollback.offset();
-                let delta = target_offset as isize - current_offset as isize;
-                self.scrollback.scroll_by(delta);
-            } else if m.row >= scrollback_len {
-                // Match is beyond current scrollback, scroll to bottom
-                self.scrollback.scroll_by(isize::MIN);
-            } else {
-                // Match should be visible at current position or scroll to bottom
-                self.scrollback.scroll_by(isize::MIN);
-            }
-        }
+        // Matches are based on display rows, so they're always visible.
+        // No scrolling needed.
     }
 
     /// Toggles case sensitivity for search.
-    pub fn search_toggle_case(&mut self, live_rows: &[RowSnapshot]) {
-        self.search
-            .toggle_case_sensitive(&self.scrollback, live_rows);
+    pub fn search_toggle_case(&mut self) {
+        self.search.toggle_case_sensitive();
     }
 
     /// Returns whether search is case-sensitive.
