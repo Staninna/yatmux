@@ -17,7 +17,7 @@ use crate::clipboard::{read_clipboard_text, write_clipboard_text};
 use crate::config::{Action, Config};
 use crate::constants::{CELL_H, CELL_W, READ_BUFFER_SIZE};
 use crate::keys::key_to_pty_bytes;
-use crate::renderer::{FontStyle, Renderer, create_palette};
+use crate::renderer::{Renderer, create_palette};
 use crate::terminal::Terminal;
 
 /// Custom events for the application.
@@ -276,7 +276,6 @@ impl App {
         match action {
             Action::Copy => self.handle_copy(),
             Action::Paste => self.handle_paste(),
-            Action::FontCycle => self.handle_font_cycle(),
             Action::ScrollPageUp => {
                 self.renderer.scrollback_scroll_by(24); // Approximate page
                 self.request_redraw();
@@ -324,28 +323,6 @@ impl App {
                 }
             }
         }
-    }
-
-    /// Handles font cycling.
-    fn handle_font_cycle(&mut self) {
-        let current = self.renderer.font_style();
-        let new_style = current.next();
-        self.renderer.set_font_style(new_style);
-
-        eprintln!("Font switched to: {:?}", new_style);
-
-        if let Some(terminal) = &self.terminal {
-            let msg = match new_style {
-                FontStyle::BoxDrawing => b"+---+\r\n|   |\r\n+---+\r\n".as_slice(),
-                FontStyle::Greek => b"alpha beta gamma delta epsilon\r\n".as_slice(),
-                FontStyle::Block => b"blocks test mode\r\n".as_slice(),
-                FontStyle::Hiragana => b"hiragana test mode\r\n".as_slice(),
-                _ => b"switched font mode\r\n".as_slice(),
-            };
-            terminal.write(msg);
-        }
-
-        self.request_redraw();
     }
 
     /// Handles copy to clipboard.
