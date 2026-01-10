@@ -41,16 +41,16 @@
 - Draw a visual arrow at the leading tab cell
 - Keep tab spacing aligned to 8-column stops
 
-### 8. Selection with mouse
-- Detect mouse drag events
-- Calculate selection bounds
-- Draw selection highlight
-- Copy to clipboard on release
+### 8. Selection with mouse ✅
+- Drag with the mouse to select cells
+- Map cursor coordinates into terminal cells consistently with scrollback
+- Highlight the selection while keeping it active after release
 
-### 9. Scrollback buffer
-- Store previous screen contents
-- Add scroll wheel support
-- Configurable scrollback size
+### 9. Scrollback buffer ✅
+- Keep a history of rendered rows and limit it to a fixed capacity
+- Scroll the viewport with the mouse wheel to inspect older rows
+- Clamp offsets so new output keeps the view at the bottom
+
 
 ### 10. Clipboard copy/paste ✅
 - Integrate with clipboard via `arboard`

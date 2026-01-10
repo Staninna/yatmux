@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use std::collections::VecDeque;
+
 use anyhow::Result;
 use font8x8::UnicodeFonts;
 use softbuffer::Surface;
@@ -9,6 +11,64 @@ use crate::constants::{
     CELL_H, CELL_W, DEFAULT_BG_COLOR, DEFAULT_FG_COLOR, FONT_SCALE, GLYPH_H, GLYPH_W,
     TAB_STOP_WIDTH,
 };
+
+const SCROLLBACK_CAPACITY: usize = 4096;
+
+type CellData = (char, Color, Color);
+
+#[derive(Clone)]
+struct RowSnapshot {
+    cells: Vec<CellData>,
+    tabs: Vec<Option<(usize, usize)>>,
+}
+
+impl RowSnapshot {
+    fn blank(cols: usize) -> Self {
+        RowSnapshot {
+            cells: vec![(' ', Color::Default, Color::Default); cols],
+            tabs: vec![None; cols],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CellPos {
+    row: usize,
+    col: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Selection {
+    start: CellPos,
+    end: CellPos,
+}
+
+impl Selection {
+    fn normalized(&self) -> (CellPos, CellPos) {
+        if (self.start.row, self.start.col) <= (self.end.row, self.end.col) {
+            (self.start, self.end)
+        } else {
+            (self.end, self.start)
+        }
+    }
+
+    fn contains(&self, row: usize, col: usize) -> bool {
+        let (start, end) = self.normalized();
+        if row < start.row || row > end.row {
+            return false;
+        }
+        if start.row == end.row {
+            return col >= start.col && col <= end.col;
+        }
+        if row == start.row {
+            return col >= start.col;
+        }
+        if row == end.row {
+            return col <= end.col;
+        }
+        true
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FontStyle {
@@ -63,6 +123,12 @@ fn get_fallback_glyph(ch: char) -> [u8; 8] {
 
 pub struct Renderer {
     font_style: FontStyle,
+    selection: Option<Selection>,
+    scrollback_buffer: VecDeque<RowSnapshot>,
+    scrollback_offset: usize,
+    max_scrollback: usize,
+    view_rows: usize,
+    view_cols: usize,
 }
 
 impl Default for Renderer {
@@ -75,6 +141,12 @@ impl Renderer {
     pub fn new() -> Self {
         Renderer {
             font_style: FontStyle::Basic,
+            selection: None,
+            scrollback_buffer: VecDeque::new(),
+            scrollback_offset: 0,
+            max_scrollback: SCROLLBACK_CAPACITY,
+            view_rows: 0,
+            view_cols: 0,
         }
     }
 
@@ -84,6 +156,23 @@ impl Renderer {
 
     pub fn font_style(&self) -> FontStyle {
         self.font_style
+    }
+
+    fn set_dimensions(&mut self, rows: usize, cols: usize) {
+        if self.view_rows != rows || self.view_cols != cols {
+            self.view_rows = rows;
+            self.view_cols = cols;
+            self.scrollback_buffer.clear();
+            self.scrollback_offset = 0;
+            self.selection = None;
+        }
+    }
+
+    fn clamp_position(&self, row: usize, col: usize) -> CellPos {
+        CellPos {
+            row: row.min(self.view_rows.saturating_sub(1)),
+            col: col.min(self.view_cols.saturating_sub(1)),
+        }
     }
 
     fn draw_cell(
@@ -99,6 +188,7 @@ impl Renderer {
         bg_color: Color,
         palette: &Arc<[u32; 256]>,
         tab_info: Option<(usize, usize)>,
+        selected: bool,
     ) {
         let fg = color_to_u32(fg_color, DEFAULT_FG_COLOR, palette);
         let bg = color_to_u32(bg_color, DEFAULT_BG_COLOR, palette);
@@ -106,11 +196,12 @@ impl Renderer {
         let bg = if invert { fg } else { bg };
         let fg = if invert { bg } else { fg };
 
-        let fill_color = if tab_info.is_some() {
-            lighten_color(bg)
-        } else {
-            bg
-        };
+        let mut fill_color = bg;
+        if selected {
+            fill_color = lighten_color(bg);
+        } else if tab_info.is_some() {
+            fill_color = lighten_color(bg);
+        }
 
         let x0 = col * CELL_W;
         let y0 = row * CELL_H;
@@ -171,7 +262,7 @@ impl Renderer {
     }
 
     pub fn render(
-        &self,
+        &mut self,
         surface: &mut Surface<winit::event_loop::OwnedDisplayHandle, winit::window::Window>,
         parser: &Arc<Mutex<vt100::Parser>>,
         palette: &Arc<[u32; 256]>,
@@ -183,7 +274,7 @@ impl Renderer {
         let buffer_height = buffer.height().get() as usize;
         buffer.fill(DEFAULT_BG_COLOR);
 
-        let (cursor, screen_cells, rows, cols, tab_ranges) = {
+        let (cursor, rows, cols, rows_data) = {
             let parser = parser
                 .lock()
                 .map_err(|_| anyhow::anyhow!("parser mutex poisoned"))?;
@@ -192,10 +283,12 @@ impl Renderer {
 
             let rows = buffer_height / CELL_H;
             let cols = buffer_width / CELL_W;
+            self.set_dimensions(rows, cols);
 
-            let mut cells = Vec::with_capacity(rows * cols);
-            let mut tab_ranges = vec![None; rows * cols];
+            let mut rows_data = Vec::with_capacity(rows);
             for row in 0..rows {
+                let mut row_cells = Vec::with_capacity(cols);
+                let mut row_tabs = vec![None; cols];
                 for col in 0..cols {
                     let cell = screen.cell(row as u16, col as u16);
                     let contents = cell.map(|c| c.contents()).unwrap_or_default();
@@ -206,27 +299,48 @@ impl Renderer {
                         let end_col = ((col / TAB_STOP_WIDTH) + 1) * TAB_STOP_WIDTH;
                         let end_col = end_col.min(cols);
                         for c in col..end_col {
-                            let tab_idx = row * cols + c;
-                            tab_ranges[tab_idx] = Some((col, end_col));
+                            row_tabs[c] = Some((col, end_col));
                         }
                     }
-                    cells.push((ch, fg, bg));
+                    row_cells.push((ch, fg, bg));
                 }
+                rows_data.push(RowSnapshot {
+                    cells: row_cells,
+                    tabs: row_tabs,
+                });
             }
-            (cursor, cells, rows, cols, tab_ranges)
+            (cursor, rows, cols, rows_data)
         };
 
-        for row in 0..rows {
+        self.push_rows(&rows_data);
+
+        let display_rows = if self.scrollback_offset == 0 {
+            rows_data.clone()
+        } else {
+            let mut view = Vec::with_capacity(rows);
+            let buffer_len = self.scrollback_buffer.len();
+            let start = buffer_len.saturating_sub(rows + self.scrollback_offset);
+            for idx in start..start + rows {
+                if let Some(row) = self.scrollback_buffer.get(idx) {
+                    view.push(row.clone());
+                } else {
+                    view.push(RowSnapshot::blank(cols));
+                }
+            }
+            view
+        };
+
+        for (row_idx, row_data) in display_rows.iter().enumerate().take(rows) {
             for col in 0..cols {
-                let idx = row * cols + col;
-                let (ch, fg, bg) = screen_cells[idx];
-                let invert = (row as u16, col as u16) == cursor;
-                let tab_info = tab_ranges[idx];
+                let (ch, fg, bg) = row_data.cells[col];
+                let invert = self.scrollback_offset == 0 && (row_idx as u16, col as u16) == cursor;
+                let tab_info = row_data.tabs[col];
+                let selected = self.is_cell_selected(row_idx, col);
                 self.draw_cell(
                     &mut buffer,
                     buffer_width,
                     buffer_height,
-                    row,
+                    row_idx,
                     col,
                     ch,
                     invert,
@@ -234,6 +348,7 @@ impl Renderer {
                     bg,
                     palette,
                     tab_info,
+                    selected,
                 );
             }
         }
@@ -242,6 +357,61 @@ impl Renderer {
             .present()
             .map_err(|e| anyhow::anyhow!("softbuffer present failed: {e:?}"))?;
         Ok(())
+    }
+
+    fn push_rows(&mut self, rows: &[RowSnapshot]) {
+        for row in rows {
+            self.scrollback_buffer.push_back(row.clone());
+            if self.scrollback_buffer.len() > self.max_scrollback {
+                self.scrollback_buffer.pop_front();
+            }
+        }
+        let max_offset = self.scrollback_buffer.len().saturating_sub(self.view_rows);
+        if self.scrollback_offset > max_offset {
+            self.scrollback_offset = max_offset;
+        }
+    }
+
+    pub fn scrollback_scroll_by(&mut self, delta_lines: isize) {
+        if self.scrollback_buffer.len() <= self.view_rows {
+            return;
+        }
+        let max_offset = self.scrollback_buffer.len().saturating_sub(self.view_rows);
+        let offset = (self.scrollback_offset as isize + delta_lines).clamp(0, max_offset as isize);
+        self.scrollback_offset = offset as usize;
+    }
+
+    pub fn start_selection(&mut self, row: usize, col: usize) {
+        let pos = self.clamp_position(row, col);
+        self.selection = Some(Selection {
+            start: pos,
+            end: pos,
+        });
+    }
+
+    pub fn update_selection(&mut self, row: usize, col: usize) {
+        if let Some(mut sel) = self.selection {
+            sel.end = self.clamp_position(row, col);
+            self.selection = Some(sel);
+        }
+    }
+
+    fn is_cell_selected(&self, row: usize, col: usize) -> bool {
+        self.selection
+            .map(|sel| sel.contains(row, col))
+            .unwrap_or(false)
+    }
+
+    pub fn window_to_cell(&self, x: f64, y: f64) -> Option<(usize, usize)> {
+        if self.view_rows == 0 || self.view_cols == 0 {
+            return None;
+        }
+        let col = (x as usize) / CELL_W;
+        let row = (y as usize) / CELL_H;
+        if row >= self.view_rows || col >= self.view_cols {
+            return None;
+        }
+        Some((row, col))
     }
 }
 

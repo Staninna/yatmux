@@ -9,7 +9,8 @@ use anyhow::Result;
 use portable_pty::PtySize;
 use softbuffer::{Context, Surface};
 use winit::{
-    event::{ElementState, Event, WindowEvent},
+    dpi::PhysicalPosition,
+    event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     keyboard::{Key, ModifiersState, NamedKey},
     window::Window,
@@ -48,6 +49,8 @@ fn main() -> Result<()> {
 
     let palette = Arc::new(color_palette());
     let mut renderer = Renderer::new();
+    let mut cursor_position = PhysicalPosition::new(0.0, 0.0);
+    let mut mouse_selecting = false;
 
     {
         let parser = Arc::clone(&parser);
@@ -101,6 +104,45 @@ fn main() -> Result<()> {
                     surface.window().request_redraw();
                 }
                 WindowEvent::ModifiersChanged(new_mods) => modifiers = new_mods.state(),
+                WindowEvent::CursorMoved { position, .. } => {
+                    cursor_position = position;
+                    if mouse_selecting {
+                        if let Some((row, col)) = renderer.window_to_cell(position.x, position.y) {
+                            renderer.update_selection(row, col);
+                            surface.window().request_redraw();
+                        }
+                    }
+                }
+                WindowEvent::MouseInput { state, button, .. } => {
+                    if button == MouseButton::Left {
+                        match state {
+                            ElementState::Pressed => {
+                                mouse_selecting = true;
+                                if let Some((row, col)) =
+                                    renderer.window_to_cell(cursor_position.x, cursor_position.y)
+                                {
+                                    renderer.start_selection(row, col);
+                                    surface.window().request_redraw();
+                                }
+                            }
+                            ElementState::Released => {
+                                mouse_selecting = false;
+                            }
+                        }
+                    }
+                }
+                WindowEvent::MouseWheel { delta, .. } => {
+                    let lines = match delta {
+                        MouseScrollDelta::LineDelta(_, y) => (y * 3.0).round() as isize,
+                        MouseScrollDelta::PixelDelta(pos) => {
+                            (pos.y / CELL_H as f64).round() as isize
+                        }
+                    };
+                    if lines != 0 {
+                        renderer.scrollback_scroll_by(lines);
+                        surface.window().request_redraw();
+                    }
+                }
                 WindowEvent::KeyboardInput { event, .. } => {
                     if event.state != ElementState::Pressed {
                         return;
