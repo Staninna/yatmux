@@ -1,272 +1,34 @@
-use std::{
-    io::Read,
-    num::NonZeroU32,
-    sync::{Arc, Mutex},
-    thread,
-};
+//! Terminal emulator entry point.
 
 use anyhow::Result;
-use portable_pty::PtySize;
-use softbuffer::{Context, Surface};
-use winit::{
-    dpi::PhysicalPosition,
-    event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    keyboard::{Key, ModifiersState, NamedKey},
-    window::Window,
-};
+use winit::event_loop::EventLoop;
 
-use crate::constants::{CELL_H, CELL_W, DEFAULT_COLS, DEFAULT_ROWS};
-
+mod app;
 mod clipboard;
+mod config;
 mod constants;
 mod keys;
 mod pty;
 mod renderer;
+mod terminal;
 
-use clipboard::read_clipboard_text;
-use constants::*;
-use keys::key_to_pty_bytes;
-use pty::{Pty, spawn_shell};
-use renderer::{FontStyle, Renderer, color_palette};
-
-#[derive(Debug, Clone)]
-enum UserEvent {
-    PtyUpdated,
-}
+use app::{App, AppEvent};
+use config::Config;
 
 fn main() -> Result<()> {
-    let (pty, pty_reader) = spawn_shell()?;
-    let pty = Arc::new(pty);
-    let parser = Arc::new(Mutex::new(vt100::Parser::new(
-        DEFAULT_ROWS,
-        DEFAULT_COLS,
-        0,
-    )));
+    // Load configuration
+    let config = Config::load();
 
-    let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
+    // Create event loop
+    let event_loop = EventLoop::<AppEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
 
-    let palette = Arc::new(color_palette());
-    let mut renderer = Renderer::new();
-    let mut cursor_position = PhysicalPosition::new(0.0, 0.0);
-    let mut mouse_selecting = false;
+    // Create application
+    let mut app = App::new(config);
+    app.set_event_proxy(proxy);
 
-    {
-        let parser = Arc::clone(&parser);
-        let mut reader = pty_reader;
-        thread::spawn(move || {
-            let mut buf = [0u8; READ_BUFFER_SIZE];
-            loop {
-                let read_len = match reader.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => n,
-                    Err(_) => break,
-                };
-                {
-                    if let Ok(mut parser) = parser.lock() {
-                        parser.process(&buf[..read_len]);
-                    }
-                }
-                let _ = proxy.send_event(UserEvent::PtyUpdated);
-            }
-        });
-    }
-
-    let display = event_loop.owned_display_handle();
-    let window = event_loop.create_window(Window::default_attributes().with_title("term"))?;
-    let context = Context::new(display)
-        .map_err(|e| anyhow::anyhow!("softbuffer Context::new failed: {e:?}"))?;
-    let mut surface = Surface::new(&context, window)
-        .map_err(|e| anyhow::anyhow!("softbuffer Surface::new failed: {e:?}"))?;
-
-    let mut modifiers = ModifiersState::default();
-
-    resize_terminal(&mut surface, &parser, &pty)?;
-    surface.window().request_redraw();
-
-    event_loop.run(move |event, elwt| {
-        elwt.set_control_flow(ControlFlow::Wait);
-
-        match event {
-            Event::UserEvent(UserEvent::PtyUpdated) => surface.window().request_redraw(),
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::RedrawRequested => {
-                    if let Err(err) = renderer.render(&mut surface, &parser, &palette) {
-                        eprintln!("render error: {err:#}");
-                    }
-                }
-                WindowEvent::CloseRequested => elwt.exit(),
-                WindowEvent::Resized(_) => {
-                    if let Err(err) = resize_terminal(&mut surface, &parser, &pty) {
-                        eprintln!("resize error: {err:#}");
-                    }
-                    surface.window().request_redraw();
-                }
-                WindowEvent::ModifiersChanged(new_mods) => modifiers = new_mods.state(),
-                WindowEvent::CursorMoved { position, .. } => {
-                    cursor_position = position;
-                    if mouse_selecting {
-                        if let Some((row, col)) = renderer.window_to_cell(position.x, position.y) {
-                            renderer.update_selection(row, col);
-                            surface.window().request_redraw();
-                        }
-                    }
-                }
-                WindowEvent::MouseInput { state, button, .. } => {
-                    if button == MouseButton::Left {
-                        match state {
-                            ElementState::Pressed => {
-                                mouse_selecting = true;
-                                if let Some((row, col)) =
-                                    renderer.window_to_cell(cursor_position.x, cursor_position.y)
-                                {
-                                    renderer.start_selection(row, col);
-                                    surface.window().request_redraw();
-                                }
-                            }
-                            ElementState::Released => {
-                                mouse_selecting = false;
-                            }
-                        }
-                    }
-                }
-                WindowEvent::MouseWheel { delta, .. } => {
-                    let lines = match delta {
-                        MouseScrollDelta::LineDelta(_, y) => (y * 3.0).round() as isize,
-                        MouseScrollDelta::PixelDelta(pos) => {
-                            (pos.y / CELL_H as f64).round() as isize
-                        }
-                    };
-                    if lines != 0 {
-                        renderer.scrollback_scroll_by(lines);
-                        surface.window().request_redraw();
-                    }
-                }
-                WindowEvent::KeyboardInput { event, .. } => {
-                    if event.state != ElementState::Pressed {
-                        return;
-                    }
-
-                    if let Key::Named(NamedKey::F12) = &event.logical_key {
-                        let styles: [FontStyle; 8] = [
-                            FontStyle::Basic,
-                            FontStyle::BoxDrawing,
-                            FontStyle::Block,
-                            FontStyle::Greek,
-                            FontStyle::Hiragana,
-                            FontStyle::Latin,
-                            FontStyle::Misc,
-                            FontStyle::Sga,
-                        ];
-                        let current = renderer.font_style();
-                        let current_idx = styles.iter().position(|&s| s == current).unwrap_or(0);
-                        let next_idx = (current_idx + 1) % styles.len();
-                        let new_style = styles[next_idx];
-                        renderer.set_font_style(new_style);
-
-                        eprintln!("Font switched to: {:?}", new_style);
-
-                        match new_style {
-                            FontStyle::BoxDrawing => {
-                                pty.write(b"+---+\r\n|   |\r\n+---+\r\n");
-                            }
-                            FontStyle::Greek => {
-                                pty.write(b"alpha beta gamma delta epsilon\r\n");
-                            }
-                            FontStyle::Block => {
-                                pty.write(b"blocks test mode\r\n");
-                            }
-                            FontStyle::Hiragana => {
-                                pty.write(b"hiragana test mode\r\n");
-                            }
-                            _ => {
-                                pty.write(b"switched font mode\r\n");
-                            }
-                        }
-
-                        surface.window().request_redraw();
-                        return;
-                    }
-
-                    if is_paste_shortcut(&event.logical_key, modifiers) {
-                        if let Some(text) = read_clipboard_text() {
-                            if !text.is_empty() {
-                                pty.write(text.as_bytes());
-                                surface.window().request_redraw();
-                            }
-                        }
-                        return;
-                    }
-
-                    if !modifiers.control_key() {
-                        if let Some(text) = &event.text {
-                            if !text.is_empty() {
-                                pty.write(text.as_bytes());
-                                surface.window().request_redraw();
-                                return;
-                            }
-                        }
-                    }
-
-                    if let Some(bytes) = key_to_pty_bytes(&event.logical_key, modifiers) {
-                        pty.write(&bytes);
-                        surface.window().request_redraw();
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-    })?;
-    Ok(())
-}
-
-fn resize_terminal(
-    surface: &mut Surface<winit::event_loop::OwnedDisplayHandle, Window>,
-    parser: &Arc<Mutex<vt100::Parser>>,
-    pty: &Arc<Pty>,
-) -> Result<()> {
-    let size = surface.window().inner_size();
-    let width = size.width.max(1);
-    let height = size.height.max(1);
-
-    surface
-        .resize(
-            NonZeroU32::new(width).unwrap(),
-            NonZeroU32::new(height).unwrap(),
-        )
-        .map_err(|e| anyhow::anyhow!("softbuffer resize failed: {e:?}"))?;
-
-    let cols = (width as usize / CELL_W).max(1) as u16;
-    let rows = (height as usize / CELL_H).max(1) as u16;
-
-    if let Ok(mut parser) = parser.lock() {
-        parser.set_size(rows, cols);
-    }
-
-    pty.resize(PtySize {
-        rows,
-        cols,
-        pixel_width: width as u16,
-        pixel_height: height as u16,
-    });
+    // Run the application
+    event_loop.run_app(&mut app)?;
 
     Ok(())
-}
-
-fn is_paste_shortcut(key: &Key, modifiers: ModifiersState) -> bool {
-    if modifiers.control_key() {
-        if let Key::Character(c) = key {
-            return c.eq_ignore_ascii_case("v");
-        }
-    }
-
-    if modifiers.shift_key() {
-        if let Key::Named(NamedKey::Insert) = key {
-            return true;
-        }
-    }
-
-    false
 }
