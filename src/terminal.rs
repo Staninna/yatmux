@@ -184,16 +184,19 @@ impl Terminal {
         }
     }
 
-    /// Processes input bytes through the parser (for testing).
-    #[cfg(test)]
+    /// Processes input bytes through the parser (simulates PTY output).
+    ///
+    /// This method is primarily used for testing to simulate data coming from
+    /// the PTY without needing an actual shell process.
     pub fn process(&self, bytes: &[u8]) {
         if let Ok(mut parser) = self.parser.lock() {
             parser.process(bytes);
         }
     }
 
-    /// Returns the current screen contents as a string (for testing).
-    #[cfg(test)]
+    /// Returns the current screen contents as a string.
+    ///
+    /// Useful for testing and debugging to see the terminal's current display state.
     pub fn screen_text(&self) -> String {
         let parser = self.parser.lock().unwrap();
         let screen = parser.screen();

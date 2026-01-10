@@ -13,12 +13,12 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{CursorIcon, Window, WindowId};
 
-use crate::clipboard::{read_clipboard_text, write_clipboard_text};
-use crate::config::{Action, Config};
-use crate::constants::{CELL_H, CELL_W, READ_BUFFER_SIZE};
-use crate::keys::key_to_pty_bytes;
-use crate::renderer::{Renderer, create_palette};
-use crate::terminal::Terminal;
+use term::clipboard::{read_clipboard_text, write_clipboard_text};
+use term::config::{Action, Config};
+use term::constants::{CELL_H, CELL_W, READ_BUFFER_SIZE};
+use term::keys::key_to_pty_bytes;
+use term::renderer::{Renderer, create_palette};
+use term::terminal::Terminal;
 
 /// Custom events for the application.
 #[derive(Debug, Clone)]
@@ -82,7 +82,7 @@ impl App {
 
     /// Initializes the terminal and starts the PTY reader thread.
     fn initialize_terminal(&mut self) {
-        let (pty, reader) = match crate::pty::spawn_shell() {
+        let (pty, reader) = match term::pty::spawn_shell() {
             Ok(result) => result,
             Err(e) => {
                 eprintln!("Failed to spawn shell: {e}");

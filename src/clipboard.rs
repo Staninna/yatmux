@@ -69,7 +69,6 @@ pub fn write_clipboard_text(text: &str) -> bool {
 }
 
 /// Mock clipboard for testing.
-#[cfg(test)]
 pub mod mock {
     use super::ClipboardProvider;
     use std::sync::Mutex;

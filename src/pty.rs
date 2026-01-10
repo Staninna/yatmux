@@ -113,7 +113,6 @@ fn default_shell() -> String {
 /// Mock PTY writer for testing.
 ///
 /// Records all writes and resize calls for verification in tests.
-#[cfg(test)]
 pub mod mock {
     use super::PtyWriter;
     use std::sync::Mutex;

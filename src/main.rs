@@ -4,16 +4,9 @@ use anyhow::Result;
 use winit::event_loop::EventLoop;
 
 mod app;
-mod clipboard;
-mod config;
-mod constants;
-mod keys;
-mod pty;
-mod renderer;
-mod terminal;
 
 use app::{App, AppEvent};
-use config::Config;
+use term::Config;
 
 fn main() -> Result<()> {
     // Load configuration
