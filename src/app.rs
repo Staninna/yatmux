@@ -254,8 +254,11 @@ impl App {
             let alt = self.input.modifiers.alt_key();
 
             if let Some(action) = self.config.keybinds.get_action(&key_str, ctrl, shift, alt) {
-                self.execute_action(action);
-                return;
+                // Skip search-mode-only actions when not in search mode
+                if !action.is_search_mode_only() {
+                    self.execute_action(action);
+                    return;
+                }
             }
         }
 
@@ -263,6 +266,8 @@ impl App {
         if !self.input.modifiers.control_key() && !self.input.modifiers.alt_key() {
             if let Some(text) = &event.text {
                 if !text.is_empty() {
+                    // Snap to bottom when user types
+                    self.renderer.scrollback_snap_to_bottom();
                     terminal.write(text.as_bytes());
                     self.request_redraw();
                     return;
@@ -272,6 +277,8 @@ impl App {
 
         // Special keys (arrows, etc.) that need escape sequences
         if let Some(bytes) = key_to_pty_bytes(&event.logical_key, self.input.modifiers) {
+            // Snap to bottom when user types
+            self.renderer.scrollback_snap_to_bottom();
             terminal.write(&bytes);
             self.request_redraw();
         }
@@ -279,41 +286,60 @@ impl App {
 
     /// Handles keyboard input when search mode is active.
     fn handle_search_keyboard(&mut self, event: &winit::event::KeyEvent) {
-        match &event.logical_key {
-            Key::Named(NamedKey::Escape) => {
-                self.renderer.deactivate_search();
-                self.request_redraw();
-            }
-            Key::Named(NamedKey::Enter) => {
-                // Navigate to next match or close search
-                if self.renderer.search_match_count() > 0 {
-                    self.renderer.search_next();
+        // Check for configurable keybinds first
+        if let Some(key_str) = Self::key_to_string(&event.logical_key) {
+            let ctrl = self.input.modifiers.control_key();
+            let shift = self.input.modifiers.shift_key();
+            let alt = self.input.modifiers.alt_key();
+
+            if let Some(action) = self.config.keybinds.get_action(&key_str, ctrl, shift, alt) {
+                match action {
+                    Action::SearchClose => {
+                        self.renderer.deactivate_search();
+                        self.request_redraw();
+                        return;
+                    }
+                    Action::SearchConfirm => {
+                        if self.renderer.search_match_count() > 0 {
+                            self.renderer.search_next();
+                        }
+                        self.request_redraw();
+                        return;
+                    }
+                    Action::SearchNext => {
+                        self.renderer.search_next();
+                        self.request_redraw();
+                        return;
+                    }
+                    Action::SearchPrev => {
+                        self.renderer.search_prev();
+                        self.request_redraw();
+                        return;
+                    }
+                    Action::SearchToggleCase => {
+                        self.renderer.search_toggle_case();
+                        self.request_redraw();
+                        return;
+                    }
+                    // Other actions are not relevant in search mode
+                    _ => {}
                 }
-                self.request_redraw();
             }
+        }
+
+        // Handle text input for search query
+        match &event.logical_key {
             Key::Named(NamedKey::Backspace) => {
                 self.renderer.search_pop_char();
                 self.request_redraw();
             }
-            Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowLeft) => {
-                self.renderer.search_prev();
-                self.request_redraw();
-            }
-            Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::ArrowRight) => {
-                self.renderer.search_next();
-                self.request_redraw();
-            }
             Key::Character(s) => {
-                // Handle Ctrl+C to toggle case sensitivity
-                if self.input.modifiers.control_key() && s.eq_ignore_ascii_case("c") {
-                    self.renderer.search_toggle_case();
-                } else if !self.input.modifiers.control_key() && !self.input.modifiers.alt_key() {
-                    // Regular character input
+                if !self.input.modifiers.control_key() && !self.input.modifiers.alt_key() {
                     for ch in s.chars() {
                         self.renderer.search_push_char(ch);
                     }
+                    self.request_redraw();
                 }
-                self.request_redraw();
             }
             _ => {}
         }
@@ -362,6 +388,29 @@ impl App {
                 self.renderer.activate_search();
                 self.request_redraw();
             }
+            // Search mode actions - only meaningful when search is active
+            Action::SearchClose => {
+                self.renderer.deactivate_search();
+                self.request_redraw();
+            }
+            Action::SearchNext => {
+                self.renderer.search_next();
+                self.request_redraw();
+            }
+            Action::SearchPrev => {
+                self.renderer.search_prev();
+                self.request_redraw();
+            }
+            Action::SearchToggleCase => {
+                self.renderer.search_toggle_case();
+                self.request_redraw();
+            }
+            Action::SearchConfirm => {
+                if self.renderer.search_match_count() > 0 {
+                    self.renderer.search_next();
+                }
+                self.request_redraw();
+            }
         }
     }
 
@@ -379,12 +428,9 @@ impl App {
 
     /// Handles copy to clipboard.
     fn handle_copy(&mut self) {
-        let selection = self.renderer.get_selection_bounds();
-        if let Some(terminal) = &self.terminal {
-            if let Some(text) = terminal.get_selected_text(selection) {
-                if write_clipboard_text(&text) {
-                    eprintln!("Copied {} characters to clipboard", text.len());
-                }
+        if let Some(text) = self.renderer.get_selected_text() {
+            if write_clipboard_text(&text) {
+                eprintln!("Copied {} characters to clipboard", text.len());
             }
         }
     }
