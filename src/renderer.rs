@@ -23,7 +23,7 @@ pub enum FontStyle {
 
 impl FontStyle {
     fn get_glyph(&self, ch: char) -> [u8; 8] {
-        match self {
+        let glyph = match self {
             FontStyle::Basic => font8x8::BASIC_FONTS.get(ch).unwrap_or([0; 8]),
             FontStyle::BoxDrawing => font8x8::BOX_FONTS.get(ch).unwrap_or([0; 8]),
             FontStyle::Block => font8x8::BLOCK_FONTS.get(ch).unwrap_or([0; 8]),
@@ -32,8 +32,25 @@ impl FontStyle {
             FontStyle::Latin => font8x8::LATIN_FONTS.get(ch).unwrap_or([0; 8]),
             FontStyle::Misc => font8x8::MISC_FONTS.get(ch).unwrap_or([0; 8]),
             FontStyle::Sga => font8x8::SGA_FONTS.get(ch).unwrap_or([0; 8]),
+        };
+        if glyph != [0; 8] {
+            return glyph;
         }
+        get_fallback_glyph(ch)
     }
+}
+
+fn get_fallback_glyph(ch: char) -> [u8; 8] {
+    font8x8::BASIC_FONTS
+        .get(ch)
+        .or_else(|| font8x8::BOX_FONTS.get(ch))
+        .or_else(|| font8x8::BLOCK_FONTS.get(ch))
+        .or_else(|| font8x8::GREEK_FONTS.get(ch))
+        .or_else(|| font8x8::HIRAGANA_FONTS.get(ch))
+        .or_else(|| font8x8::LATIN_FONTS.get(ch))
+        .or_else(|| font8x8::MISC_FONTS.get(ch))
+        .or_else(|| font8x8::SGA_FONTS.get(ch))
+        .unwrap_or([0; 8])
 }
 
 pub struct Renderer {
@@ -296,5 +313,35 @@ mod tests {
         assert_eq!(renderer.font_style(), FontStyle::BoxDrawing);
         renderer.set_font_style(FontStyle::Greek);
         assert_eq!(renderer.font_style(), FontStyle::Greek);
+    }
+
+    #[test]
+    fn test_font_fallback_ascii_in_box_drawing() {
+        let style = FontStyle::BoxDrawing;
+        let glyph = style.get_glyph('A');
+        assert_ne!(
+            glyph, [0; 8],
+            "ASCII 'A' should render in BoxDrawing mode via fallback"
+        );
+    }
+
+    #[test]
+    fn test_font_fallback_ascii_in_greek() {
+        let style = FontStyle::Greek;
+        let glyph = style.get_glyph('z');
+        assert_ne!(
+            glyph, [0; 8],
+            "ASCII 'z' should render in Greek mode via fallback"
+        );
+    }
+
+    #[test]
+    fn test_get_fallback_glyph() {
+        let glyph = get_fallback_glyph('A');
+        assert_ne!(glyph, [0; 8]);
+        let glyph = get_fallback_glyph('─');
+        assert_ne!(glyph, [0; 8]);
+        let glyph = get_fallback_glyph('α');
+        assert_ne!(glyph, [0; 8]);
     }
 }
