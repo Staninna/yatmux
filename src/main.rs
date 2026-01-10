@@ -27,10 +27,26 @@ const GLYPH_H: usize = 8;
 const CELL_W: usize = GLYPH_W * FONT_SCALE;
 const CELL_H: usize = GLYPH_H * FONT_SCALE;
 
+const DEFAULT_ROWS: u16 = 24;
+const DEFAULT_COLS: u16 = 80;
+
+const DEFAULT_BG_COLOR: u32 = 0x00_10_10_10;
+const DEFAULT_FG_COLOR: u32 = 0x00_D0_D0_D0;
+
+const ESCAPE_BYTE: u8 = 0x1b;
+const BACKSPACE_BYTE: u8 = 0x7f;
+const NULL_BYTE: u8 = 0x00;
+
+const READ_BUFFER_SIZE: usize = 8192;
+
 fn main() -> Result<()> {
     let (pty, pty_reader) = spawn_shell()?;
     let pty = Arc::new(pty);
-    let parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 0)));
+    let parser = Arc::new(Mutex::new(vt100::Parser::new(
+        DEFAULT_ROWS,
+        DEFAULT_COLS,
+        0,
+    )));
 
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
@@ -39,7 +55,7 @@ fn main() -> Result<()> {
         let parser = Arc::clone(&parser);
         let mut reader = pty_reader;
         thread::spawn(move || {
-            let mut buf = [0u8; 8192];
+            let mut buf = [0u8; READ_BUFFER_SIZE];
             loop {
                 let read_len = match reader.read(&mut buf) {
                     Ok(0) => break,
@@ -47,8 +63,9 @@ fn main() -> Result<()> {
                     Err(_) => break,
                 };
                 {
-                    let mut parser = parser.lock().ok().unwrap();
-                    parser.process(&buf[..read_len]);
+                    if let Ok(mut parser) = parser.lock() {
+                        parser.process(&buf[..read_len]);
+                    }
                 }
                 let _ = proxy.send_event(UserEvent::PtyUpdated);
             }
@@ -64,7 +81,7 @@ fn main() -> Result<()> {
 
     let mut modifiers = ModifiersState::default();
 
-    let palette = color_palette();
+    let palette = Arc::new(color_palette());
 
     resize_terminal(&mut surface, &parser, &pty)?;
     surface.window().request_redraw();
@@ -152,17 +169,19 @@ fn resize_terminal(
 fn render(
     surface: &mut Surface<winit::event_loop::OwnedDisplayHandle, Window>,
     parser: &Arc<Mutex<vt100::Parser>>,
-    palette: &[u32; 256],
+    palette: &Arc<[u32; 256]>,
 ) -> Result<()> {
     let mut buffer = surface
         .buffer_mut()
         .map_err(|e| anyhow::anyhow!("softbuffer buffer_mut failed: {e:?}"))?;
     let buffer_width = buffer.width().get() as usize;
     let buffer_height = buffer.height().get() as usize;
-    buffer.fill(0x00_10_10_10);
+    buffer.fill(DEFAULT_BG_COLOR);
 
     let (cursor, screen_cells, rows, cols) = {
-        let parser = parser.lock().unwrap();
+        let parser = parser
+            .lock()
+            .map_err(|_| anyhow::anyhow!("parser mutex poisoned"))?;
         let screen = parser.screen();
         let cursor = screen.cursor_position();
 
@@ -264,10 +283,10 @@ fn draw_cell(
     invert: bool,
     fg_color: vt100::Color,
     bg_color: vt100::Color,
-    palette: &[u32; 256],
+    palette: &Arc<[u32; 256]>,
 ) {
-    let default_bg = 0x00_10_10_10;
-    let default_fg = 0x00_D0_D0_D0;
+    let default_bg = DEFAULT_BG_COLOR;
+    let default_fg = DEFAULT_FG_COLOR;
 
     let fg = color_to_u32(fg_color, default_fg, palette);
     let bg = color_to_u32(bg_color, default_bg, palette);
@@ -314,22 +333,22 @@ fn key_to_pty_bytes(key: &Key, mods: ModifiersState) -> Option<Vec<u8>> {
         Key::Named(NamedKey::Tab) => Some(b"\t".to_vec()),
         Key::Named(NamedKey::Space) => {
             if ctrl {
-                Some(vec![0x00])
+                Some(vec![NULL_BYTE])
             } else {
                 Some(b" ".to_vec())
             }
         }
-        Key::Named(NamedKey::Backspace) => Some(vec![0x7f]),
-        Key::Named(NamedKey::Escape) => Some(vec![0x1b]),
-        Key::Named(NamedKey::ArrowUp) => Some(b"\x1b[A".to_vec()),
-        Key::Named(NamedKey::ArrowDown) => Some(b"\x1b[B".to_vec()),
-        Key::Named(NamedKey::ArrowRight) => Some(b"\x1b[C".to_vec()),
-        Key::Named(NamedKey::ArrowLeft) => Some(b"\x1b[D".to_vec()),
-        Key::Named(NamedKey::Home) => Some(b"\x1b[H".to_vec()),
-        Key::Named(NamedKey::End) => Some(b"\x1b[F".to_vec()),
-        Key::Named(NamedKey::PageUp) => Some(b"\x1b[5~".to_vec()),
-        Key::Named(NamedKey::PageDown) => Some(b"\x1b[6~".to_vec()),
-        Key::Named(NamedKey::Delete) => Some(b"\x1b[3~".to_vec()),
+        Key::Named(NamedKey::Backspace) => Some(vec![BACKSPACE_BYTE]),
+        Key::Named(NamedKey::Escape) => Some(vec![ESCAPE_BYTE]),
+        Key::Named(NamedKey::ArrowUp) => Some([ESCAPE_BYTE, b'[', b'A'].to_vec()),
+        Key::Named(NamedKey::ArrowDown) => Some([ESCAPE_BYTE, b'[', b'B'].to_vec()),
+        Key::Named(NamedKey::ArrowRight) => Some([ESCAPE_BYTE, b'[', b'C'].to_vec()),
+        Key::Named(NamedKey::ArrowLeft) => Some([ESCAPE_BYTE, b'[', b'D'].to_vec()),
+        Key::Named(NamedKey::Home) => Some([ESCAPE_BYTE, b'H'].to_vec()),
+        Key::Named(NamedKey::End) => Some([ESCAPE_BYTE, b'F'].to_vec()),
+        Key::Named(NamedKey::PageUp) => Some([ESCAPE_BYTE, b'[', b'5', b'~'].to_vec()),
+        Key::Named(NamedKey::PageDown) => Some([ESCAPE_BYTE, b'[', b'6', b'~'].to_vec()),
+        Key::Named(NamedKey::Delete) => Some([ESCAPE_BYTE, b'[', b'3', b'~'].to_vec()),
         Key::Character(s) => {
             let mut chars = s.chars();
             let ch = chars.next()?;
@@ -373,8 +392,8 @@ fn spawn_shell() -> Result<(Pty, Box<dyn Read + Send>)> {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
-            rows: 24,
-            cols: 80,
+            rows: DEFAULT_ROWS,
+            cols: DEFAULT_COLS,
             pixel_width: 0,
             pixel_height: 0,
         })
