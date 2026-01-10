@@ -104,21 +104,6 @@ fn main() -> Result<()> {
                         return;
                     }
 
-                    if !modifiers.control_key() {
-                        if let Some(text) = &event.text {
-                            if !text.is_empty() {
-                                pty.write(text.as_bytes());
-                                surface.window().request_redraw();
-                                return;
-                            }
-                        }
-                    }
-
-                    if let Some(bytes) = key_to_pty_bytes(&event.logical_key, modifiers) {
-                        pty.write(&bytes);
-                        surface.window().request_redraw();
-                    }
-
                     if modifiers.alt_key() {
                         if let Key::Character(c) = &event.logical_key {
                             if c == "f" {
@@ -141,6 +126,21 @@ fn main() -> Result<()> {
                                 return;
                             }
                         }
+                    }
+
+                    if !modifiers.control_key() {
+                        if let Some(text) = &event.text {
+                            if !text.is_empty() {
+                                pty.write(text.as_bytes());
+                                surface.window().request_redraw();
+                                return;
+                            }
+                        }
+                    }
+
+                    if let Some(bytes) = key_to_pty_bytes(&event.logical_key, modifiers) {
+                        pty.write(&bytes);
+                        surface.window().request_redraw();
                     }
                 }
                 _ => {}
