@@ -8,6 +8,17 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 use crate::constants::{DEFAULT_COLS, DEFAULT_ROWS};
 
+/// Trait for writing to a PTY.
+///
+/// This abstraction allows for mocking the PTY in tests.
+pub trait PtyWriter: Send + Sync {
+    /// Writes bytes to the PTY.
+    fn write(&self, bytes: &[u8]);
+
+    /// Resizes the PTY to the given dimensions.
+    fn resize(&self, rows: u16, cols: u16, pixel_width: u16, pixel_height: u16);
+}
+
 /// Wrapper around a pseudo-terminal for shell communication.
 pub struct Pty {
     master: Mutex<Box<dyn portable_pty::MasterPty + Send>>,
@@ -20,7 +31,7 @@ impl Pty {
     ///
     /// Logs a warning if the write fails but does not propagate the error,
     /// as write failures during normal operation (e.g., shell exit) are expected.
-    pub fn write(&self, bytes: &[u8]) {
+    fn write_impl(&self, bytes: &[u8]) {
         if let Ok(mut writer) = self.writer.lock() {
             if let Err(e) = writer.write_all(bytes) {
                 eprintln!("pty write failed: {e}");
@@ -33,12 +44,27 @@ impl Pty {
     }
 
     /// Resizes the PTY to the given dimensions.
-    pub fn resize(&self, size: PtySize) {
+    fn resize_impl(&self, size: PtySize) {
         if let Ok(master) = self.master.lock() {
             if let Err(e) = master.resize(size) {
                 eprintln!("pty resize failed: {e}");
             }
         }
+    }
+}
+
+impl PtyWriter for Pty {
+    fn write(&self, bytes: &[u8]) {
+        self.write_impl(bytes);
+    }
+
+    fn resize(&self, rows: u16, cols: u16, pixel_width: u16, pixel_height: u16) {
+        self.resize_impl(PtySize {
+            rows,
+            cols,
+            pixel_width,
+            pixel_height,
+        });
     }
 }
 
@@ -81,5 +107,84 @@ fn default_shell() -> String {
     #[cfg(not(windows))]
     {
         std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string())
+    }
+}
+
+/// Mock PTY writer for testing.
+///
+/// Records all writes and resize calls for verification in tests.
+#[cfg(test)]
+pub mod mock {
+    use super::PtyWriter;
+    use std::sync::Mutex;
+
+    /// A mock PTY that records all operations for testing.
+    #[derive(Default)]
+    pub struct MockPty {
+        /// All bytes written to the PTY.
+        pub writes: Mutex<Vec<Vec<u8>>>,
+        /// All resize operations: (rows, cols, pixel_width, pixel_height).
+        pub resizes: Mutex<Vec<(u16, u16, u16, u16)>>,
+    }
+
+    impl MockPty {
+        /// Creates a new mock PTY.
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// Returns all bytes written to the PTY, concatenated.
+        pub fn written_bytes(&self) -> Vec<u8> {
+            self.writes
+                .lock()
+                .unwrap()
+                .iter()
+                .flatten()
+                .copied()
+                .collect()
+        }
+
+        /// Returns all bytes written as a string (lossy conversion).
+        pub fn written_string(&self) -> String {
+            String::from_utf8_lossy(&self.written_bytes()).to_string()
+        }
+    }
+
+    impl PtyWriter for MockPty {
+        fn write(&self, bytes: &[u8]) {
+            self.writes.lock().unwrap().push(bytes.to_vec());
+        }
+
+        fn resize(&self, rows: u16, cols: u16, pixel_width: u16, pixel_height: u16) {
+            self.resizes
+                .lock()
+                .unwrap()
+                .push((rows, cols, pixel_width, pixel_height));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mock_pty_write() {
+        let pty = mock::MockPty::new();
+        pty.write(b"hello");
+        pty.write(b" world");
+        assert_eq!(pty.written_string(), "hello world");
+    }
+
+    #[test]
+    fn test_mock_pty_resize() {
+        let pty = mock::MockPty::new();
+        pty.resize(24, 80, 640, 480);
+        pty.resize(30, 100, 800, 600);
+
+        let resizes = pty.resizes.lock().unwrap();
+        assert_eq!(resizes.len(), 2);
+        assert_eq!(resizes[0], (24, 80, 640, 480));
+        assert_eq!(resizes[1], (30, 100, 800, 600));
     }
 }

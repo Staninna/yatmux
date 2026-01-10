@@ -5,11 +5,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use portable_pty::PtySize;
 use vt100::Color;
 
 use crate::constants::{DEFAULT_COLS, DEFAULT_ROWS, TAB_STOP_WIDTH};
-use crate::pty::Pty;
+use crate::pty::PtyWriter;
 
 /// Data for a single cell: character, foreground color, background color.
 #[allow(dead_code)]
@@ -46,12 +45,12 @@ pub struct ScreenSnapshot {
 /// Core terminal state, independent of rendering.
 pub struct Terminal {
     parser: Arc<Mutex<vt100::Parser>>,
-    pty: Arc<Pty>,
+    pty: Arc<dyn PtyWriter>,
 }
 
 impl Terminal {
     /// Creates a new terminal with the given PTY.
-    pub fn new(pty: Arc<Pty>) -> Self {
+    pub fn new(pty: Arc<dyn PtyWriter>) -> Self {
         let parser = Arc::new(Mutex::new(vt100::Parser::new(
             DEFAULT_ROWS,
             DEFAULT_COLS,
@@ -67,7 +66,7 @@ impl Terminal {
 
     /// Returns a clone of the PTY Arc.
     #[allow(dead_code)]
-    pub fn pty(&self) -> Arc<Pty> {
+    pub fn pty(&self) -> Arc<dyn PtyWriter> {
         Arc::clone(&self.pty)
     }
 
@@ -85,12 +84,7 @@ impl Terminal {
             parser.set_size(rows, cols);
         }
 
-        self.pty.resize(PtySize {
-            rows,
-            cols,
-            pixel_width: width as u16,
-            pixel_height: height as u16,
-        });
+        self.pty.resize(rows, cols, width as u16, height as u16);
     }
 
     /// Captures the current screen state as a snapshot.
