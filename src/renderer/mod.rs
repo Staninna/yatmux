@@ -7,6 +7,7 @@ mod color;
 mod font;
 mod scrollback;
 mod selection;
+mod url;
 
 pub use color::create_palette;
 
@@ -25,11 +26,13 @@ use color::{color_to_u32, lighten_color};
 use font::tab_indicator_glyph;
 use scrollback::{CellData, RowSnapshot, ScrollbackBuffer};
 use selection::SelectionManager;
+use url::UrlManager;
 
 /// The main terminal renderer.
 pub struct Renderer {
     selection: SelectionManager,
     scrollback: ScrollbackBuffer,
+    urls: UrlManager,
     view_rows: usize,
     view_cols: usize,
 }
@@ -46,6 +49,7 @@ impl Renderer {
         Renderer {
             selection: SelectionManager::new(),
             scrollback: ScrollbackBuffer::new(),
+            urls: UrlManager::new(),
             view_rows: 0,
             view_cols: 0,
         }
@@ -58,6 +62,7 @@ impl Renderer {
             self.view_cols = cols;
             self.scrollback.set_dimensions(rows, cols);
             self.selection.set_dimensions(rows, cols);
+            self.urls.set_dimensions(rows);
         }
     }
 
@@ -76,12 +81,17 @@ impl Renderer {
         palette: &[u32; 256],
         tab_info: Option<(usize, usize)>,
         selected: bool,
+        is_url: bool,
+        is_url_hovered: bool,
     ) {
         let fg = color_to_u32(fg_color, DEFAULT_FG_COLOR, palette);
         let bg = color_to_u32(bg_color, DEFAULT_BG_COLOR, palette);
 
         // Handle cursor inversion
         let (fg, bg) = if invert { (bg, fg) } else { (fg, bg) };
+
+        // URL color: use a blue tint for URLs
+        let fg = if is_url { 0x6699FF } else { fg };
 
         // Determine fill color
         let fill_color = if selected || tab_info.is_some() {
@@ -120,6 +130,16 @@ impl Renderer {
         // Draw character glyph
         let glyph = font::get_glyph(ch);
         self.draw_glyph(backbuffer, width, height, x0, y0, glyph, fg);
+
+        // Draw underline for hovered URLs
+        if is_url_hovered {
+            let underline_y = y0 + CELL_H - 2;
+            if underline_y < height {
+                for x in x0..(x0 + CELL_W).min(width) {
+                    backbuffer[underline_y * width + x] = fg;
+                }
+            }
+        }
     }
 
     /// Draws a glyph bitmap at the specified position.
@@ -185,6 +205,12 @@ impl Renderer {
             .get_display_rows(cols)
             .unwrap_or_else(|| rows_data.clone());
 
+        // Detect URLs in each row
+        for (row_idx, row_data) in display_rows.iter().enumerate().take(rows) {
+            let text: String = row_data.cells.iter().map(|(ch, _, _)| ch).collect();
+            self.urls.update_row(row_idx, &text);
+        }
+
         // Render each cell
         let show_cursor = self.scrollback.offset() == 0;
         for (row_idx, row_data) in display_rows.iter().enumerate().take(rows) {
@@ -197,6 +223,8 @@ impl Renderer {
                 let invert = show_cursor && (row_idx as u16, col as u16) == cursor;
                 let tab_info = row_data.tabs.get(col).copied().flatten();
                 let selected = self.selection.is_selected(row_idx, col);
+                let is_url = self.urls.is_url(row_idx, col);
+                let is_url_hovered = self.urls.is_hovered(row_idx, col);
 
                 self.draw_cell(
                     &mut buffer,
@@ -211,6 +239,8 @@ impl Renderer {
                     palette,
                     tab_info,
                     selected,
+                    is_url,
+                    is_url_hovered,
                 );
             }
         }
@@ -324,6 +354,30 @@ impl Renderer {
     /// Clears the scrollback buffer.
     pub fn clear_scrollback(&mut self) {
         self.scrollback.clear();
+    }
+
+    /// Updates the URL hover state based on cursor position.
+    /// Returns true if the hover state changed.
+    pub fn update_url_hover(&mut self, row: usize, col: usize) -> bool {
+        let was_hovered = self.urls.hovered_url().is_some();
+        self.urls.update_hover(row, col);
+        let is_hovered = self.urls.hovered_url().is_some();
+        was_hovered != is_hovered || is_hovered
+    }
+
+    /// Clears the URL hover state.
+    pub fn clear_url_hover(&mut self) {
+        self.urls.clear_hover();
+    }
+
+    /// Returns the URL at the given cell position if any.
+    pub fn url_at(&self, row: usize, col: usize) -> Option<String> {
+        self.urls.url_at(row, col).map(|span| span.full_url())
+    }
+
+    /// Returns true if there's a hovered URL.
+    pub fn has_hovered_url(&self) -> bool {
+        self.urls.hovered_url().is_some()
     }
 }
 

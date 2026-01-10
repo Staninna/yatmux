@@ -11,7 +11,7 @@ use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
-use winit::window::{Window, WindowId};
+use winit::window::{CursorIcon, Window, WindowId};
 
 use crate::clipboard::{read_clipboard_text, write_clipboard_text};
 use crate::config::{Action, Config};
@@ -345,11 +345,21 @@ impl App {
 
         match state {
             ElementState::Pressed => {
-                self.input.mouse_selecting = true;
+                // Check for URL click first
                 if let Some((row, col)) = self
                     .renderer
                     .window_to_cell(self.input.cursor_position.x, self.input.cursor_position.y)
                 {
+                    if let Some(url) = self.renderer.url_at(row, col) {
+                        // Open URL in browser
+                        if let Err(e) = open::that(&url) {
+                            eprintln!("Failed to open URL: {e}");
+                        }
+                        return;
+                    }
+
+                    // Start selection
+                    self.input.mouse_selecting = true;
                     self.renderer.start_selection(row, col);
                     self.request_redraw();
                 }
@@ -369,6 +379,29 @@ impl App {
                 self.renderer.update_selection(row, col);
                 self.request_redraw();
             }
+        } else {
+            // Update URL hover state
+            if let Some((row, col)) = self.renderer.window_to_cell(position.x, position.y) {
+                if self.renderer.update_url_hover(row, col) {
+                    self.request_redraw();
+                    self.update_cursor();
+                }
+            } else {
+                self.renderer.clear_url_hover();
+                self.update_cursor();
+            }
+        }
+    }
+
+    /// Updates the cursor icon based on hover state.
+    fn update_cursor(&self) {
+        if let Some(graphics) = &self.graphics {
+            let cursor = if self.renderer.has_hovered_url() {
+                CursorIcon::Pointer
+            } else {
+                CursorIcon::Text
+            };
+            graphics.surface.window().set_cursor(cursor);
         }
     }
 
