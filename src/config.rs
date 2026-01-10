@@ -231,6 +231,30 @@ pub enum Action {
     Reset,
     /// Open search mode.
     SearchFind,
+    /// Close search mode.
+    SearchClose,
+    /// Navigate to next search match.
+    SearchNext,
+    /// Navigate to previous search match.
+    SearchPrev,
+    /// Toggle search case sensitivity.
+    SearchToggleCase,
+    /// Confirm search / go to current match.
+    SearchConfirm,
+}
+
+impl Action {
+    /// Returns true if this action only applies in search mode.
+    pub fn is_search_mode_only(&self) -> bool {
+        matches!(
+            self,
+            Action::SearchClose
+                | Action::SearchNext
+                | Action::SearchPrev
+                | Action::SearchToggleCase
+                | Action::SearchConfirm
+        )
+    }
 }
 
 /// A keybind specification.
@@ -291,15 +315,29 @@ pub struct KeybindConfig {
 impl Default for KeybindConfig {
     fn default() -> Self {
         let mut bindings = HashMap::new();
+
+        // General actions
         bindings.insert("ctrl+shift+c".to_string(), Action::Copy);
         bindings.insert("ctrl+shift+v".to_string(), Action::Paste);
         bindings.insert("ctrl+v".to_string(), Action::Paste);
         bindings.insert("shift+insert".to_string(), Action::Paste);
         bindings.insert("shift+pageup".to_string(), Action::ScrollPageUp);
         bindings.insert("shift+pagedown".to_string(), Action::ScrollPageDown);
+        bindings.insert("shift+up".to_string(), Action::ScrollLineUp);
+        bindings.insert("shift+down".to_string(), Action::ScrollLineDown);
         bindings.insert("ctrl+shift+home".to_string(), Action::ScrollToTop);
         bindings.insert("ctrl+shift+end".to_string(), Action::ScrollToBottom);
         bindings.insert("ctrl+shift+f".to_string(), Action::SearchFind);
+        bindings.insert("ctrl+shift+k".to_string(), Action::ClearScrollback);
+
+        // Search mode actions
+        bindings.insert("escape".to_string(), Action::SearchClose);
+        bindings.insert("enter".to_string(), Action::SearchConfirm);
+        bindings.insert("ctrl+n".to_string(), Action::SearchNext);
+        bindings.insert("ctrl+p".to_string(), Action::SearchPrev);
+        bindings.insert("ctrl+c".to_string(), Action::SearchToggleCase);
+        bindings.insert("down".to_string(), Action::SearchNext);
+        bindings.insert("up".to_string(), Action::SearchPrev);
 
         KeybindConfig { bindings }
     }
@@ -427,6 +465,72 @@ mod tests {
         assert_eq!(
             config.keybinds.get_action("f1", false, false, false),
             Some(Action::ScrollToTop)
+        );
+    }
+
+    #[test]
+    fn test_search_keybinds() {
+        let config = KeybindConfig::default();
+
+        // Search mode keybinds
+        assert_eq!(
+            config.get_action("escape", false, false, false),
+            Some(Action::SearchClose)
+        );
+        assert_eq!(
+            config.get_action("enter", false, false, false),
+            Some(Action::SearchConfirm)
+        );
+        assert_eq!(
+            config.get_action("n", true, false, false),
+            Some(Action::SearchNext)
+        );
+        assert_eq!(
+            config.get_action("p", true, false, false),
+            Some(Action::SearchPrev)
+        );
+        assert_eq!(
+            config.get_action("c", true, false, false),
+            Some(Action::SearchToggleCase)
+        );
+    }
+
+    #[test]
+    fn test_search_keybinds_configurable() {
+        let toml = r#"
+            [keybinds]
+            "ctrl+g" = "search_close"
+            "ctrl+j" = "search_next"
+            "ctrl+k" = "search_prev"
+        "#;
+
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.keybinds.get_action("g", true, false, false),
+            Some(Action::SearchClose)
+        );
+        assert_eq!(
+            config.keybinds.get_action("j", true, false, false),
+            Some(Action::SearchNext)
+        );
+        assert_eq!(
+            config.keybinds.get_action("k", true, false, false),
+            Some(Action::SearchPrev)
+        );
+    }
+
+    #[test]
+    fn test_search_arrow_keybinds() {
+        let config = KeybindConfig::default();
+
+        // Arrow keys should work for search navigation
+        assert_eq!(
+            config.get_action("down", false, false, false),
+            Some(Action::SearchNext)
+        );
+        assert_eq!(
+            config.get_action("up", false, false, false),
+            Some(Action::SearchPrev)
         );
     }
 }
