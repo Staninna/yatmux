@@ -162,3 +162,52 @@ pub fn render(
         .map_err(|e| anyhow::anyhow!("softbuffer present failed: {e:?}"))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_color_palette_size() {
+        let palette = color_palette();
+        assert_eq!(palette.len(), 256);
+    }
+
+    #[test]
+    fn test_color_palette_standard_colors() {
+        let palette = color_palette();
+        assert_eq!(palette[0], 0x00_00_00_00);
+        assert_eq!(palette[1], 0x00_80_00_00);
+        assert_eq!(palette[7], 0x00_C0_C0_C0);
+        assert_eq!(palette[15], 0x00_FF_FF_FF);
+    }
+
+    #[test]
+    fn test_color_palette_grayscale() {
+        let palette = color_palette();
+        assert_eq!(palette[232], 0x00_08_08_08);
+        assert_eq!(palette[245], 0x00_8A_8A_8A);
+        assert_eq!(palette[255], 0x00_EE_EE_EE);
+    }
+
+    #[test]
+    fn test_color_to_u32_default() {
+        let palette = color_palette();
+        let result = color_to_u32(Color::Default, 0xFF_AABB_CC, &palette);
+        assert_eq!(result, 0xFF_AABB_CC);
+    }
+
+    #[test]
+    fn test_color_to_u32_indexed() {
+        let palette = color_palette();
+        let result = color_to_u32(Color::Idx(1), 0, &palette);
+        assert_eq!(result, palette[1]);
+    }
+
+    #[test]
+    fn test_color_to_u32_rgb() {
+        let palette = color_palette();
+        let result = color_to_u32(Color::Rgb(128, 64, 32), 0, &palette);
+        assert_eq!(result, 0x00_80_40_20);
+    }
+}
