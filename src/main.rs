@@ -1,12 +1,12 @@
 use std::{
     io::Read,
     num::NonZeroU32,
+    process::{Command, Stdio},
     sync::{Arc, Mutex},
     thread,
 };
 
 use anyhow::{Context as _, Result};
-use arboard::Clipboard;
 use portable_pty::PtySize;
 use softbuffer::{Context, Surface};
 use winit::{
@@ -108,11 +108,25 @@ fn main() -> Result<()> {
                     if modifiers.control_key() && modifiers.shift_key() {
                         if let Key::Character(c) = &event.logical_key {
                             if c == "v" {
-                                if let Ok(mut clipboard) = Clipboard::new() {
-                                    if let Ok(text) = clipboard.get_text() {
-                                        pty.write(text.as_bytes());
-                                        surface.window().request_redraw();
-                                    }
+                                let text = if let Ok(output) = Command::new("xclip")
+                                    .args(&["-selection", "clipboard", "-o"])
+                                    .stdout(Stdio::piped())
+                                    .output()
+                                {
+                                    String::from_utf8_lossy(&output.stdout).to_string()
+                                } else if let Ok(output) = Command::new("xsel")
+                                    .args(&["--clipboard", "--output"])
+                                    .stdout(Stdio::piped())
+                                    .output()
+                                {
+                                    String::from_utf8_lossy(&output.stdout).to_string()
+                                } else {
+                                    eprintln!("No clipboard tool (xclip/xsel) found");
+                                    return;
+                                };
+                                if !text.is_empty() {
+                                    pty.write(text.as_bytes());
+                                    surface.window().request_redraw();
                                 }
                                 return;
                             }
