@@ -25,7 +25,7 @@ mod renderer;
 use constants::*;
 use keys::key_to_pty_bytes;
 use pty::{Pty, spawn_shell};
-use renderer::{color_palette, render};
+use renderer::{Renderer, color_palette};
 
 #[derive(Debug, Clone)]
 enum UserEvent {
@@ -45,6 +45,7 @@ fn main() -> Result<()> {
     let proxy = event_loop.create_proxy();
 
     let palette = Arc::new(color_palette());
+    let renderer = Renderer::new();
 
     {
         let parser = Arc::clone(&parser);
@@ -86,7 +87,7 @@ fn main() -> Result<()> {
             Event::UserEvent(UserEvent::PtyUpdated) => surface.window().request_redraw(),
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::RedrawRequested => {
-                    if let Err(err) = render(&mut surface, &parser, &palette) {
+                    if let Err(err) = renderer.render(&mut surface, &parser, &palette) {
                         eprintln!("render error: {err:#}");
                     }
                 }
