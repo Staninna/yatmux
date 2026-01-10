@@ -14,6 +14,45 @@ use crate::constants::{
     SCROLL_SPEED_MULTIPLIER, SCROLLBACK_CAPACITY, TAB_STOP_WIDTH,
 };
 
+/// Serde module for serializing colors as hex strings like "#RRGGBB".
+mod hex_color {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(color: &u32, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("#{:06X}", color))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u32, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        // Accept either a string ("#RRGGBB", "0xRRGGBB") or an integer
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum ColorValue {
+            String(String),
+            Int(u32),
+        }
+
+        match ColorValue::deserialize(deserializer)? {
+            ColorValue::Int(n) => Ok(n),
+            ColorValue::String(s) => {
+                parse_color(&s).ok_or_else(|| Error::custom("invalid color format"))
+            }
+        }
+    }
+
+    fn parse_color(s: &str) -> Option<u32> {
+        let s = s.trim().trim_start_matches('#').trim_start_matches("0x");
+        u32::from_str_radix(s, 16).ok()
+    }
+}
+
 /// Main configuration structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -38,12 +77,32 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Loads configuration from the default path or returns defaults.
+    /// Loads configuration from the default path.
+    /// If config file doesn't exist, writes defaults and returns them.
     pub fn load() -> Self {
-        Self::config_path()
-            .and_then(|path| fs::read_to_string(path).ok())
-            .and_then(|contents| toml::from_str(&contents).ok())
-            .unwrap_or_default()
+        let Some(path) = Self::config_path() else {
+            return Config::default();
+        };
+
+        // Try to read existing config
+        if let Ok(contents) = fs::read_to_string(&path) {
+            if let Ok(config) = toml::from_str(&contents) {
+                return config;
+            }
+            // Config exists but is invalid - don't overwrite, just use defaults
+            eprintln!(
+                "Warning: invalid config at {}, using defaults",
+                path.display()
+            );
+            return Config::default();
+        }
+
+        // Config doesn't exist - create default
+        let config = Config::default();
+        if let Err(e) = config.save() {
+            eprintln!("Warning: could not write default config: {e}");
+        }
+        config
     }
 
     /// Returns the configuration file path.
@@ -61,19 +120,6 @@ impl Config {
         let contents = toml::to_string_pretty(self)?;
         fs::write(path, contents)?;
         Ok(())
-    }
-
-    /// Creates a default config file if one doesn't exist.
-    #[allow(dead_code)]
-    pub fn create_default_if_missing() -> Result<bool, Box<dyn std::error::Error>> {
-        if let Some(path) = Self::config_path() {
-            if !path.exists() {
-                let config = Config::default();
-                config.save()?;
-                return Ok(true);
-            }
-        }
-        Ok(false)
     }
 }
 
@@ -96,11 +142,14 @@ impl Default for WindowConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ColorConfig {
-    /// Background color in hex format (0xRRGGBB).
+    /// Background color in hex format (#RRGGBB).
+    #[serde(with = "hex_color")]
     pub background: u32,
-    /// Foreground color in hex format (0xRRGGBB).
+    /// Foreground color in hex format (#RRGGBB).
+    #[serde(with = "hex_color")]
     pub foreground: u32,
     /// Optional custom 16-color palette (ANSI colors 0-15).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub palette: Option<[u32; 16]>,
 }
 
@@ -164,8 +213,6 @@ pub enum Action {
     Copy,
     /// Paste from clipboard.
     Paste,
-    /// Cycle through font styles.
-    FontCycle,
     /// Scroll up by one page.
     ScrollPageUp,
     /// Scroll down by one page.
@@ -246,7 +293,6 @@ impl Default for KeybindConfig {
         bindings.insert("ctrl+shift+v".to_string(), Action::Paste);
         bindings.insert("ctrl+v".to_string(), Action::Paste);
         bindings.insert("shift+insert".to_string(), Action::Paste);
-        bindings.insert("f12".to_string(), Action::FontCycle);
         bindings.insert("shift+pageup".to_string(), Action::ScrollPageUp);
         bindings.insert("shift+pagedown".to_string(), Action::ScrollPageDown);
         bindings.insert("ctrl+shift+home".to_string(), Action::ScrollToTop);
@@ -309,6 +355,9 @@ mod tests {
         let toml = toml::to_string(&config).unwrap();
         assert!(toml.contains("[window]"));
         assert!(toml.contains("[colors]"));
+        // Verify colors are serialized as hex strings
+        assert!(toml.contains("background = \"#"));
+        assert!(toml.contains("foreground = \"#"));
     }
 
     #[test]
@@ -352,8 +401,8 @@ mod tests {
             Some(Action::Paste)
         );
         assert_eq!(
-            config.get_action("f12", false, false, false),
-            Some(Action::FontCycle)
+            config.get_action("pageup", false, true, false),
+            Some(Action::ScrollPageUp)
         );
         assert_eq!(config.get_action("x", true, true, false), None);
     }
@@ -364,7 +413,7 @@ mod tests {
             [keybinds]
             "ctrl+c" = "copy"
             "ctrl+v" = "paste"
-            "f1" = "font_cycle"
+            "f1" = "scroll_to_top"
         "#;
 
         let config: Config = toml::from_str(toml).unwrap();
@@ -374,7 +423,7 @@ mod tests {
         );
         assert_eq!(
             config.keybinds.get_action("f1", false, false, false),
-            Some(Action::FontCycle)
+            Some(Action::ScrollToTop)
         );
     }
 }
