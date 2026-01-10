@@ -5,11 +5,13 @@
 
 mod color;
 mod font;
-mod scrollback;
+pub mod scrollback;
+mod search;
 mod selection;
 mod url;
 
 pub use color::create_palette;
+pub use search::{SearchMatch, SearchState};
 
 use std::sync::{Arc, Mutex};
 
@@ -28,11 +30,16 @@ use scrollback::{CellData, RowSnapshot, ScrollbackBuffer};
 use selection::SelectionManager;
 use url::UrlManager;
 
+/// Search highlight colors.
+const SEARCH_MATCH_BG: u32 = 0x4A4A00; // Dark yellow for regular matches
+const SEARCH_CURRENT_BG: u32 = 0x806000; // Brighter yellow for current match
+
 /// The main terminal renderer.
 pub struct Renderer {
     selection: SelectionManager,
     scrollback: ScrollbackBuffer,
     urls: UrlManager,
+    search: SearchState,
     view_rows: usize,
     view_cols: usize,
 }
@@ -50,6 +57,7 @@ impl Renderer {
             selection: SelectionManager::new(),
             scrollback: ScrollbackBuffer::new(),
             urls: UrlManager::new(),
+            search: SearchState::new(),
             view_rows: 0,
             view_cols: 0,
         }
@@ -83,6 +91,7 @@ impl Renderer {
         selected: bool,
         is_url: bool,
         is_url_hovered: bool,
+        search_match: Option<bool>, // Some(true) = current match, Some(false) = other match
     ) {
         let fg = color_to_u32(fg_color, DEFAULT_FG_COLOR, palette);
         let bg = color_to_u32(bg_color, DEFAULT_BG_COLOR, palette);
@@ -93,11 +102,17 @@ impl Renderer {
         // URL color: use a blue tint for URLs
         let fg = if is_url { 0x6699FF } else { fg };
 
-        // Determine fill color
-        let fill_color = if selected || tab_info.is_some() {
-            lighten_color(bg)
-        } else {
-            bg
+        // Determine fill color based on state priority:
+        // 1. Search current match (highest)
+        // 2. Search other matches
+        // 3. Selection
+        // 4. Tab indicator
+        // 5. Normal background (lowest)
+        let fill_color = match search_match {
+            Some(true) => SEARCH_CURRENT_BG, // Current search match
+            Some(false) => SEARCH_MATCH_BG,  // Other search matches
+            None if selected || tab_info.is_some() => lighten_color(bg),
+            None => bg,
         };
 
         let x0 = col * CELL_W;
@@ -226,6 +241,18 @@ impl Renderer {
                 let is_url = self.urls.is_url(row_idx, col);
                 let is_url_hovered = self.urls.is_hovered(row_idx, col);
 
+                // Calculate absolute row for search matching
+                let scroll_offset = self.scrollback.offset();
+                let scrollback_len = self.scrollback.len();
+                let absolute_row = if scroll_offset > 0 {
+                    // When scrolled back, we're viewing historical rows
+                    scrollback_len.saturating_sub(self.view_rows + scroll_offset) + row_idx
+                } else {
+                    // When at live view, we're at the end of scrollback
+                    scrollback_len.saturating_sub(self.view_rows) + row_idx
+                };
+                let search_match = self.search.is_match(absolute_row, col);
+
                 self.draw_cell(
                     &mut buffer,
                     buffer_width,
@@ -241,8 +268,14 @@ impl Renderer {
                     selected,
                     is_url,
                     is_url_hovered,
+                    search_match,
                 );
             }
+        }
+
+        // Draw search bar if search is active
+        if self.search.is_active() {
+            self.draw_search_bar(&mut buffer, buffer_width, buffer_height);
         }
 
         buffer
@@ -250,6 +283,79 @@ impl Renderer {
             .map_err(|e| anyhow::anyhow!("softbuffer present failed: {e:?}"))?;
 
         Ok(())
+    }
+
+    /// Draws the search bar at the bottom of the screen.
+    fn draw_search_bar(&self, buffer: &mut [u32], width: usize, height: usize) {
+        let bar_height = CELL_H;
+        let bar_y = height.saturating_sub(bar_height);
+
+        // Background color for search bar
+        let bar_bg = 0x333333;
+        let text_color = 0xFFFFFF;
+        let match_info_color = 0xAAAAAA;
+
+        // Fill background
+        for y in bar_y..height {
+            for x in 0..width {
+                buffer[y * width + x] = bar_bg;
+            }
+        }
+
+        // Draw "Find: " prefix
+        let prefix = "Find: ";
+        let mut x_pos = CELL_W / 2; // Small left padding
+        for ch in prefix.chars() {
+            let glyph = font::get_glyph(ch);
+            self.draw_glyph(buffer, width, height, x_pos, bar_y, glyph, text_color);
+            x_pos += CELL_W;
+        }
+
+        // Draw query
+        for ch in self.search.query().chars() {
+            if x_pos + CELL_W > width - 100 {
+                break; // Don't overflow
+            }
+            let glyph = font::get_glyph(ch);
+            self.draw_glyph(buffer, width, height, x_pos, bar_y, glyph, text_color);
+            x_pos += CELL_W;
+        }
+
+        // Draw cursor
+        let cursor_x = x_pos;
+        for y in bar_y..(bar_y + CELL_H).min(height) {
+            if cursor_x < width {
+                buffer[y * width + cursor_x] = text_color;
+            }
+        }
+
+        // Draw match count on the right side
+        let match_count = self.search.match_count();
+        let current_idx = self.search.current_match_index();
+        let case_indicator = if self.search.is_case_sensitive() {
+            "[Aa]"
+        } else {
+            "[aa]"
+        };
+
+        let match_info = if match_count > 0 {
+            format!("{}/{} {}", current_idx + 1, match_count, case_indicator)
+        } else if !self.search.query().is_empty() {
+            format!("0/0 {}", case_indicator)
+        } else {
+            case_indicator.to_string()
+        };
+
+        // Calculate right-aligned position
+        let info_width = match_info.len() * CELL_W;
+        let info_x = width.saturating_sub(info_width + CELL_W);
+
+        let mut x_pos = info_x;
+        for ch in match_info.chars() {
+            let glyph = font::get_glyph(ch);
+            self.draw_glyph(buffer, width, height, x_pos, bar_y, glyph, match_info_color);
+            x_pos += CELL_W;
+        }
     }
 
     /// Captures the current screen data from the parser.
@@ -378,6 +484,102 @@ impl Renderer {
     /// Returns true if there's a hovered URL.
     pub fn has_hovered_url(&self) -> bool {
         self.urls.hovered_url().is_some()
+    }
+
+    // =========================================================================
+    // Search Methods
+    // =========================================================================
+
+    /// Returns whether search mode is active.
+    pub fn is_search_active(&self) -> bool {
+        self.search.is_active()
+    }
+
+    /// Activates search mode.
+    pub fn activate_search(&mut self) {
+        self.search.activate();
+    }
+
+    /// Deactivates search mode.
+    pub fn deactivate_search(&mut self) {
+        self.search.deactivate();
+    }
+
+    /// Returns the current search query.
+    pub fn search_query(&self) -> &str {
+        self.search.query()
+    }
+
+    /// Returns the number of search matches.
+    pub fn search_match_count(&self) -> usize {
+        self.search.match_count()
+    }
+
+    /// Returns the current search match index.
+    pub fn search_current_index(&self) -> usize {
+        self.search.current_match_index()
+    }
+
+    /// Appends a character to the search query.
+    pub fn search_push_char(&mut self, ch: char, live_rows: &[RowSnapshot]) {
+        self.search.push_char(ch, &self.scrollback, live_rows);
+    }
+
+    /// Removes the last character from the search query.
+    pub fn search_pop_char(&mut self, live_rows: &[RowSnapshot]) {
+        self.search.pop_char(&self.scrollback, live_rows);
+    }
+
+    /// Moves to the next search match.
+    pub fn search_next(&mut self) {
+        self.search.next_match();
+        self.scroll_to_current_match();
+    }
+
+    /// Moves to the previous search match.
+    pub fn search_prev(&mut self) {
+        self.search.prev_match();
+        self.scroll_to_current_match();
+    }
+
+    /// Scrolls to make the current search match visible.
+    fn scroll_to_current_match(&mut self) {
+        if let Some(m) = self.search.current_match() {
+            let scrollback_len = self.scrollback.len();
+            let view_rows = self.view_rows;
+
+            // Calculate the scroll offset needed to show this match
+            // The match row is an absolute row in the buffer
+            if m.row < scrollback_len.saturating_sub(view_rows) {
+                // Match is in scrollback history, need to scroll up
+                let target_offset = scrollback_len.saturating_sub(m.row + view_rows);
+                let current_offset = self.scrollback.offset();
+                let delta = target_offset as isize - current_offset as isize;
+                self.scrollback.scroll_by(delta);
+            } else if m.row >= scrollback_len {
+                // Match is beyond current scrollback, scroll to bottom
+                self.scrollback.scroll_by(isize::MIN);
+            } else {
+                // Match should be visible at current position or scroll to bottom
+                self.scrollback.scroll_by(isize::MIN);
+            }
+        }
+    }
+
+    /// Toggles case sensitivity for search.
+    pub fn search_toggle_case(&mut self, live_rows: &[RowSnapshot]) {
+        self.search
+            .toggle_case_sensitive(&self.scrollback, live_rows);
+    }
+
+    /// Returns whether search is case-sensitive.
+    pub fn is_search_case_sensitive(&self) -> bool {
+        self.search.is_case_sensitive()
+    }
+
+    /// Returns a reference to the scrollback buffer (for search).
+    pub fn scrollback(&self) -> &ScrollbackBuffer {
+        &self.scrollback
     }
 }
 

@@ -229,6 +229,8 @@ pub enum Action {
     ClearScrollback,
     /// Reset the terminal.
     Reset,
+    /// Open search mode.
+    SearchFind,
 }
 
 /// A keybind specification.
@@ -297,6 +299,7 @@ impl Default for KeybindConfig {
         bindings.insert("shift+pagedown".to_string(), Action::ScrollPageDown);
         bindings.insert("ctrl+shift+home".to_string(), Action::ScrollToTop);
         bindings.insert("ctrl+shift+end".to_string(), Action::ScrollToBottom);
+        bindings.insert("ctrl+shift+f".to_string(), Action::SearchFind);
 
         KeybindConfig { bindings }
     }

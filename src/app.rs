@@ -237,6 +237,12 @@ impl App {
             return;
         }
 
+        // Handle search mode input first
+        if self.renderer.is_search_active() {
+            self.handle_search_keyboard(event);
+            return;
+        }
+
         let Some(terminal) = &self.terminal else {
             return;
         };
@@ -269,6 +275,57 @@ impl App {
             terminal.write(&bytes);
             self.request_redraw();
         }
+    }
+
+    /// Handles keyboard input when search mode is active.
+    fn handle_search_keyboard(&mut self, event: &winit::event::KeyEvent) {
+        let live_rows = self.get_live_rows();
+
+        match &event.logical_key {
+            Key::Named(NamedKey::Escape) => {
+                self.renderer.deactivate_search();
+                self.request_redraw();
+            }
+            Key::Named(NamedKey::Enter) => {
+                // Navigate to next match or close search
+                if self.renderer.search_match_count() > 0 {
+                    self.renderer.search_next();
+                }
+                self.request_redraw();
+            }
+            Key::Named(NamedKey::Backspace) => {
+                self.renderer.search_pop_char(&live_rows);
+                self.request_redraw();
+            }
+            Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowLeft) => {
+                self.renderer.search_prev();
+                self.request_redraw();
+            }
+            Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::ArrowRight) => {
+                self.renderer.search_next();
+                self.request_redraw();
+            }
+            Key::Character(s) => {
+                // Handle Ctrl+C to toggle case sensitivity
+                if self.input.modifiers.control_key() && s.eq_ignore_ascii_case("c") {
+                    self.renderer.search_toggle_case(&live_rows);
+                } else if !self.input.modifiers.control_key() && !self.input.modifiers.alt_key() {
+                    // Regular character input
+                    for ch in s.chars() {
+                        self.renderer.search_push_char(ch, &live_rows);
+                    }
+                }
+                self.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    /// Gets the current live terminal rows for search.
+    fn get_live_rows(&self) -> Vec<term::renderer::scrollback::RowSnapshot> {
+        // This is a simplified version - in reality we'd get this from the parser
+        // For now, return empty vec as the scrollback buffer has the data
+        Vec::new()
     }
 
     /// Executes a configured action.
@@ -308,6 +365,10 @@ impl App {
                 // Reset terminal state - could be expanded
                 self.renderer.clear_scrollback();
                 self.renderer.clear_selection();
+                self.request_redraw();
+            }
+            Action::SearchFind => {
+                self.renderer.activate_search();
                 self.request_redraw();
             }
         }

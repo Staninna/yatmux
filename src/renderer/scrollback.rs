@@ -161,6 +161,11 @@ impl ScrollbackBuffer {
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
     }
+
+    /// Returns a reference to a row at the given index.
+    pub fn get_row(&self, index: usize) -> Option<&RowSnapshot> {
+        self.buffer.get(index)
+    }
 }
 
 #[cfg(test)]
