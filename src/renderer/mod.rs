@@ -2,6 +2,12 @@
 //!
 //! This module provides the main rendering functionality for the terminal,
 //! composing together font, color, selection, and scrollback handling.
+//!
+//! Scrollback uses a hybrid approach:
+//! - vt100 tracks how many lines scrolled off (reliably, even with rapid output)
+//! - We capture newly scrolled-off lines to our own history buffer
+//! - Our history buffer provides full history for search and arbitrary scrollback
+//! - Display blends our history with vt100's current live view
 
 mod color;
 mod font;
@@ -21,7 +27,7 @@ use vt100::Color;
 
 use crate::constants::{
     CELL_H, CELL_W, DEFAULT_BG_COLOR, DEFAULT_FG_COLOR, FONT_SCALE, GLYPH_H, GLYPH_W,
-    TAB_STOP_WIDTH,
+    SCROLLBACK_CAPACITY, TAB_STOP_WIDTH,
 };
 
 use color::{color_to_u32, lighten_color};
@@ -42,6 +48,8 @@ pub struct Renderer {
     search: SearchState,
     view_rows: usize,
     view_cols: usize,
+    /// Cached display rows from last render (for copy operations).
+    last_display_rows: Vec<RowSnapshot>,
 }
 
 impl Default for Renderer {
@@ -60,6 +68,7 @@ impl Renderer {
             search: SearchState::new(),
             view_rows: 0,
             view_cols: 0,
+            last_display_rows: Vec::new(),
         }
     }
 
@@ -204,26 +213,33 @@ impl Renderer {
         let buffer_height = buffer.height().get() as usize;
         buffer.fill(DEFAULT_BG_COLOR);
 
-        let (cursor, rows, cols, rows_data) =
-            self.capture_screen_data(parser, buffer_height, buffer_width)?;
+        let rows = buffer_height / CELL_H;
+        let cols = buffer_width / CELL_W;
+        self.set_dimensions(rows, cols);
 
-        // Push current rows to scrollback
-        self.scrollback.push_rows(&rows_data);
+        // Capture live screen data and update our scrollback history
+        let (cursor, live_rows, _vt100_scrollback_len) =
+            self.capture_live_and_update_history(parser, rows, cols)?;
+
+        // Get display rows based on current scroll offset
+        let display_rows = self.scrollback.get_display_rows(&live_rows, cols);
 
         // Update selection with current scroll state
+        let total_rows = self.scrollback.len() + rows;
         self.selection
-            .set_scroll_state(self.scrollback.offset(), self.scrollback.len());
+            .set_scroll_state(self.scrollback.offset(), total_rows);
 
-        // Get display rows (either from scrollback or live data)
-        let display_rows = self
-            .scrollback
-            .get_display_rows(cols)
-            .unwrap_or_else(|| rows_data.clone());
+        // Cache display rows for copy operations
+        self.last_display_rows = display_rows.clone();
 
-        // Update search matches for current display rows
+        // Update search matches for ALL rows (history + live) when search is active
         if self.search.is_active() {
-            self.search.update_matches(&display_rows);
+            let all_rows = self.scrollback.get_all_rows(&live_rows);
+            self.search.update_matches(&all_rows);
         }
+
+        // Calculate view_start for search highlighting
+        let view_start = self.scrollback.view_start();
 
         // Detect URLs in each row
         for (row_idx, row_data) in display_rows.iter().enumerate().take(rows) {
@@ -246,8 +262,8 @@ impl Renderer {
                 let is_url = self.urls.is_url(row_idx, col);
                 let is_url_hovered = self.urls.is_hovered(row_idx, col);
 
-                // Search match is based on display row index directly
-                let search_match = self.search.is_match(row_idx, col);
+                // Search match uses absolute row index
+                let search_match = self.search.is_match(row_idx, col, view_start);
 
                 self.draw_cell(
                     &mut buffer,
@@ -354,36 +370,72 @@ impl Renderer {
         }
     }
 
-    /// Captures the current screen data from the parser.
-    fn capture_screen_data(
+    /// Captures live screen data and updates our scrollback history.
+    ///
+    /// This uses vt100's scrollback length as the reliable signal for when lines
+    /// scroll off, then captures those lines to our own history buffer.
+    fn capture_live_and_update_history(
         &mut self,
         parser: &Arc<Mutex<vt100::Parser>>,
-        buffer_height: usize,
-        buffer_width: usize,
-    ) -> Result<((u16, u16), usize, usize, Vec<RowSnapshot>)> {
-        let parser = parser
+        rows: usize,
+        cols: usize,
+    ) -> Result<((u16, u16), Vec<RowSnapshot>, usize)> {
+        let mut parser = parser
             .lock()
             .map_err(|_| anyhow::anyhow!("parser mutex poisoned"))?;
 
+        // Probe for actual scrollback length by setting a very large offset
+        // vt100 will clamp it to the actual scrollback size
+        parser.set_scrollback(SCROLLBACK_CAPACITY);
+        let vt100_scrollback_len = parser.screen().scrollback();
+
+        // Capture any newly scrolled-off rows before updating history
+        let view_rows = rows;
+        let new_history_rows = {
+            let new_lines =
+                vt100_scrollback_len.saturating_sub(self.scrollback.last_vt100_scrollback_len());
+
+            if new_lines > 0 {
+                // Capture the newly scrolled-off rows from vt100
+                // The safe offset is min(new_lines, view_rows) to avoid panic
+                let safe_offset = new_lines.min(view_rows);
+
+                parser.set_scrollback(safe_offset);
+                let screen = parser.screen();
+
+                // At offset N, rows 0 through N-1 are historical rows
+                // We capture them oldest to newest
+                let mut captured = Vec::with_capacity(safe_offset);
+                for row in 0..safe_offset {
+                    let (row_cells, row_tabs) = Self::capture_row_data_static(&screen, row, cols);
+                    captured.push(RowSnapshot::new(row_cells, row_tabs));
+                }
+                captured
+            } else {
+                Vec::new()
+            }
+        };
+
+        // Update our scrollback history with the newly captured rows
+        self.scrollback
+            .add_history_rows(new_history_rows, vt100_scrollback_len);
+
+        // Now capture the live view
+        parser.set_scrollback(0);
         let screen = parser.screen();
         let cursor = screen.cursor_position();
 
-        let rows = buffer_height / CELL_H;
-        let cols = buffer_width / CELL_W;
-        self.set_dimensions(rows, cols);
-
-        let mut rows_data = Vec::with_capacity(rows);
+        let mut live_rows = Vec::with_capacity(rows);
         for row in 0..rows {
-            let (row_cells, row_tabs) = self.capture_row_data(&screen, row, cols);
-            rows_data.push(RowSnapshot::new(row_cells, row_tabs));
+            let (row_cells, row_tabs) = Self::capture_row_data_static(&screen, row, cols);
+            live_rows.push(RowSnapshot::new(row_cells, row_tabs));
         }
 
-        Ok((cursor, rows, cols, rows_data))
+        Ok((cursor, live_rows, vt100_scrollback_len))
     }
 
-    /// Captures data for a single row.
-    fn capture_row_data(
-        &self,
+    /// Captures data for a single row from a screen reference (static version).
+    fn capture_row_data_static(
         screen: &vt100::Screen,
         row: usize,
         cols: usize,
@@ -417,6 +469,16 @@ impl Renderer {
         self.scrollback.scroll_by(delta_lines);
     }
 
+    /// Snaps scrollback to the bottom (live view).
+    pub fn scrollback_snap_to_bottom(&mut self) {
+        self.scrollback.snap_to_bottom();
+    }
+
+    /// Returns true if scrolled up in history.
+    pub fn is_scrolled_up(&self) -> bool {
+        self.scrollback.is_scrolled_up()
+    }
+
     /// Starts a text selection at the given cell position.
     pub fn start_selection(&mut self, row: usize, col: usize) {
         self.selection.start(row, col);
@@ -446,6 +508,60 @@ impl Renderer {
     /// Returns the current selection bounds as ((start_row, start_col), (end_row, end_col)).
     pub fn get_selection_bounds(&self) -> Option<((usize, usize), (usize, usize))> {
         self.selection.bounds()
+    }
+
+    /// Returns the selected text from the current display.
+    pub fn get_selected_text(&self) -> Option<String> {
+        // Use visible_bounds to get screen coordinates (not absolute scrollback coords)
+        let ((start_row, start_col), (end_row, end_col)) = self.selection.visible_bounds()?;
+
+        if self.last_display_rows.is_empty() {
+            return None;
+        }
+
+        let mut text = String::new();
+
+        for row in start_row..=end_row {
+            if row >= self.last_display_rows.len() {
+                break;
+            }
+
+            let row_data = &self.last_display_rows[row];
+            let row_start = if row == start_row { start_col } else { 0 };
+            let row_end = if row == end_row {
+                (end_col + 1).min(row_data.cells.len())
+            } else {
+                row_data.cells.len()
+            };
+
+            for col in row_start..row_end {
+                if let Some((ch, _, _)) = row_data.cells.get(col) {
+                    text.push(*ch);
+                }
+            }
+
+            if row != end_row {
+                text.push('\n');
+            }
+        }
+
+        // Trim trailing whitespace from each line but keep newlines
+        let trimmed: String = text
+            .lines()
+            .map(|line| line.trim_end())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    }
+
+    /// Returns the number of cached display rows (for debugging).
+    pub fn display_rows_len(&self) -> usize {
+        self.last_display_rows.len()
     }
 
     /// Clears the current selection.
@@ -539,11 +655,11 @@ impl Renderer {
     }
 
     /// Scrolls to make the current search match visible.
-    /// With the simplified search model, matches are always on currently visible rows,
-    /// so this is now a no-op. Kept for API compatibility.
     fn scroll_to_current_match(&mut self) {
-        // Matches are based on display rows, so they're always visible.
-        // No scrolling needed.
+        if let Some(match_row) = self.search.current_match_row() {
+            // scroll_to_row expects live_rows_len, not total_rows
+            self.scrollback.scroll_to_row(match_row, self.view_rows);
+        }
     }
 
     /// Toggles case sensitivity for search.
@@ -594,5 +710,81 @@ mod tests {
 
         // Way out of bounds
         assert_eq!(renderer.window_to_cell(10000.0, 10000.0), None);
+    }
+
+    #[test]
+    fn test_search_scroll_to_match() {
+        use crate::renderer::scrollback::RowSnapshot;
+        use vt100::Color;
+
+        fn make_row(text: &str) -> RowSnapshot {
+            let cells: Vec<_> = text
+                .chars()
+                .map(|ch| (ch, Color::Default, Color::Default))
+                .collect();
+            let tabs = vec![None; cells.len()];
+            RowSnapshot::new(cells, tabs)
+        }
+
+        let mut renderer = Renderer::new();
+        renderer.set_dimensions(24, 80); // 24 rows visible
+
+        // Add 100 history rows with "test" on rows 10, 50, and 90
+        let history: Vec<_> = (0..100)
+            .map(|i| {
+                if i == 10 || i == 50 || i == 90 {
+                    make_row(&format!("line {} test", i))
+                } else {
+                    make_row(&format!("line {}", i))
+                }
+            })
+            .collect();
+        renderer.scrollback.add_history_rows(history, 100);
+
+        // Simulate live rows (24 rows)
+        let live_rows: Vec<_> = (0..24).map(|i| make_row(&format!("live {}", i))).collect();
+
+        // Activate search and search for "test"
+        renderer.activate_search();
+        renderer.search_push_char('t');
+        renderer.search_push_char('e');
+        renderer.search_push_char('s');
+        renderer.search_push_char('t');
+
+        // Update matches
+        let all_rows = renderer.scrollback.get_all_rows(&live_rows);
+        renderer.search.update_matches(&all_rows);
+
+        assert_eq!(renderer.search_match_count(), 3);
+        assert_eq!(renderer.search.current_match_row(), Some(10));
+
+        // Navigate to next match (should be row 50)
+        renderer.search_next();
+        assert_eq!(renderer.search.current_match_row(), Some(50));
+
+        // Verify scrollback offset puts row 50 in view
+        let view_start = renderer.scrollback.view_start();
+        let view_end = view_start + 24;
+        assert!(
+            view_start <= 50 && 50 < view_end,
+            "Row 50 should be visible. view_start={}, view_end={}, offset={}",
+            view_start,
+            view_end,
+            renderer.scrollback.offset()
+        );
+
+        // Navigate to next match (should be row 90)
+        renderer.search_next();
+        assert_eq!(renderer.search.current_match_row(), Some(90));
+
+        let view_start = renderer.scrollback.view_start();
+        let view_end = view_start + 24;
+        assert!(
+            view_start <= 90 && 90 < view_end,
+            "Row 90 should be visible. view_start={}, view_end={}, offset={}",
+            view_start,
+            view_end,
+            renderer.scrollback.offset()
+        );
     }
 }
