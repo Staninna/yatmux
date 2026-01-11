@@ -558,6 +558,50 @@ impl Renderer {
         }
     }
 
+    /// Reflows rows to a new width by wrapping long lines.
+    fn reflow_rows(&self, rows: &[RowSnapshot], target_width: usize) -> Vec<RowSnapshot> {
+        let mut result = Vec::new();
+
+        for row in rows {
+            let content_end = row
+                .cells
+                .iter()
+                .rposition(|(ch, _, _)| !ch.is_whitespace())
+                .map(|p| p + 1)
+                .unwrap_or(0);
+
+            if content_end == 0 {
+                result.push(RowSnapshot::blank(target_width));
+                continue;
+            }
+
+            // Wrap content to target_width
+            let mut pos = 0;
+            while pos < content_end {
+                let end = (pos + target_width).min(content_end);
+                let mut cells = Vec::with_capacity(target_width);
+                cells.extend_from_slice(&row.cells[pos..end]);
+                while cells.len() < target_width {
+                    cells.push((' ', Color::Default, Color::Default));
+                }
+
+                let mut tabs = Vec::with_capacity(target_width);
+                if pos < row.tabs.len() {
+                    let tab_end = end.min(row.tabs.len());
+                    tabs.extend_from_slice(&row.tabs[pos..tab_end]);
+                }
+                while tabs.len() < target_width {
+                    tabs.push(None);
+                }
+
+                result.push(RowSnapshot::new(cells, tabs));
+                pos = end;
+            }
+        }
+
+        result
+    }
+
     /// Starts a text selection at the given cell position.
     pub fn start_selection(&mut self, row: usize, col: usize) {
         self.selection.start(row, col);
