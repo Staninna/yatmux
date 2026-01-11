@@ -55,6 +55,8 @@ pub struct ScrollbackBuffer {
     offset: usize,
     /// Number of rows in the terminal view.
     view_rows: usize,
+    /// Number of columns in the terminal view.
+    view_cols: usize,
     /// vt100's scrollback length from the last frame.
     last_vt100_scrollback_len: usize,
 }
@@ -78,15 +80,41 @@ impl ScrollbackBuffer {
             capacity,
             offset: 0,
             view_rows: 0,
+            view_cols: 0,
             last_vt100_scrollback_len: 0,
         }
     }
 
     /// Updates the view dimensions.
-    pub fn set_dimensions(&mut self, rows: usize, _cols: usize) {
-        if self.view_rows != rows {
-            self.view_rows = rows;
-            // Don't clear history on resize - it's still valid
+    /// Note: We preserve original history row widths on resize.
+    /// Display handles truncation/padding in get_display_rows().
+    pub fn set_dimensions(&mut self, rows: usize, cols: usize) {
+        self.view_rows = rows;
+        self.view_cols = cols;
+    }
+
+    /// Adjusts a row's width for display by padding with spaces or truncating.
+    /// Returns a new RowSnapshot, preserving the original.
+    fn adjust_row_for_display(row: &RowSnapshot, cols: usize) -> RowSnapshot {
+        let current_len = row.cells.len();
+
+        if current_len == cols {
+            row.clone()
+        } else if current_len < cols {
+            // Pad with spaces
+            let mut cells = row.cells.clone();
+            cells.reserve(cols - current_len);
+            for _ in current_len..cols {
+                cells.push((' ', Color::Default, Color::Default));
+            }
+            let mut tabs = row.tabs.clone();
+            tabs.resize(cols, None);
+            RowSnapshot::new(cells, tabs)
+        } else {
+            // Truncate for display (original row is preserved)
+            let cells = row.cells[..cols].to_vec();
+            let tabs = row.tabs[..cols].to_vec();
+            RowSnapshot::new(cells, tabs)
         }
     }
 
@@ -95,6 +123,12 @@ impl ScrollbackBuffer {
         self.history.clear();
         self.offset = 0;
         self.last_vt100_scrollback_len = 0;
+    }
+
+    /// Resets the vt100 scrollback tracking without clearing history.
+    /// Call this after terminal resize when vt100's scrollback may have been reset.
+    pub fn reset_vt100_tracking(&mut self, new_vt100_len: usize) {
+        self.last_vt100_scrollback_len = new_vt100_len;
     }
 
     /// Returns the last known vt100 scrollback length.
@@ -109,7 +143,7 @@ impl ScrollbackBuffer {
     pub fn add_history_rows(&mut self, new_rows: Vec<RowSnapshot>, current_vt100_len: usize) {
         let new_lines = new_rows.len();
 
-        // Add new rows to history
+        // Add new rows to history - we keep their original width
         for row in new_rows {
             self.history.push_back(row);
             if self.history.len() > self.capacity {
@@ -176,10 +210,16 @@ impl ScrollbackBuffer {
     /// The conceptual model is a combined buffer: [history...] + [live_rows...]
     /// - offset=0: show the last view_rows (the live view)
     /// - offset=N: scroll N lines up into history
+    ///
+    /// Rows are adjusted to current view_cols for display (padded or truncated),
+    /// but the original row data in history is preserved.
     pub fn get_display_rows(&self, live_rows: &[RowSnapshot], cols: usize) -> Vec<RowSnapshot> {
         if self.offset == 0 || self.history.is_empty() {
-            // Live view - just return the live rows
-            return live_rows.to_vec();
+            // Live view - adjust live rows to display width
+            return live_rows
+                .iter()
+                .map(|row| Self::adjust_row_for_display(row, cols))
+                .collect();
         }
 
         // Combined length: history + live
@@ -199,7 +239,7 @@ impl ScrollbackBuffer {
             if idx < self.history.len() {
                 // This index is in history
                 if let Some(row) = self.history.get(idx) {
-                    display.push(row.clone());
+                    display.push(Self::adjust_row_for_display(row, cols));
                 } else {
                     display.push(RowSnapshot::blank(cols));
                 }
@@ -207,7 +247,7 @@ impl ScrollbackBuffer {
                 // This index is in live_rows
                 let live_idx = idx - self.history.len();
                 if live_idx < live_rows.len() {
-                    display.push(live_rows[live_idx].clone());
+                    display.push(Self::adjust_row_for_display(&live_rows[live_idx], cols));
                 } else {
                     display.push(RowSnapshot::blank(cols));
                 }
@@ -363,10 +403,11 @@ mod tests {
 
         let live_rows = make_rows(&["Live 1", "Live 2", "Live 3"]);
 
-        // No history, offset 0 - should return live rows
+        // No history, offset 0 - should return live rows (padded to display width)
         let display = buffer.get_display_rows(&live_rows, 80);
         assert_eq!(display.len(), 3);
-        assert_eq!(display[0].text(), "Live 1");
+        assert_eq!(display[0].text().trim_end(), "Live 1");
+        assert_eq!(display[0].cells.len(), 80); // Padded to display width
     }
 
     #[test]
@@ -385,9 +426,9 @@ mod tests {
 
         // Should show part history, part live
         assert_eq!(display.len(), 3);
-        assert_eq!(display[0].text(), "Hist 2");
-        assert_eq!(display[1].text(), "Live 1");
-        assert_eq!(display[2].text(), "Live 2");
+        assert_eq!(display[0].text().trim_end(), "Hist 2");
+        assert_eq!(display[1].text().trim_end(), "Live 1");
+        assert_eq!(display[2].text().trim_end(), "Live 2");
     }
 
     #[test]
@@ -402,10 +443,10 @@ mod tests {
         let all = buffer.get_all_rows(&live_rows);
 
         assert_eq!(all.len(), 4);
-        assert_eq!(all[0].text(), "Hist 1");
-        assert_eq!(all[1].text(), "Hist 2");
-        assert_eq!(all[2].text(), "Live 1");
-        assert_eq!(all[3].text(), "Live 2");
+        assert_eq!(all[0].text().trim_end(), "Hist 1");
+        assert_eq!(all[1].text().trim_end(), "Hist 2");
+        assert_eq!(all[2].text().trim_end(), "Live 1");
+        assert_eq!(all[3].text().trim_end(), "Live 2");
     }
 
     #[test]
@@ -436,9 +477,9 @@ mod tests {
         // Should have the last 3
         let live_rows = make_rows(&[""]);
         let all = buffer.get_all_rows(&live_rows);
-        assert_eq!(all[0].text(), "Line 3");
-        assert_eq!(all[1].text(), "Line 4");
-        assert_eq!(all[2].text(), "Line 5");
+        assert_eq!(all[0].text().trim_end(), "Line 3");
+        assert_eq!(all[1].text().trim_end(), "Line 4");
+        assert_eq!(all[2].text().trim_end(), "Line 5");
     }
 
     #[test]
@@ -556,5 +597,79 @@ mod tests {
             view_start,
             view_end
         );
+    }
+
+    #[test]
+    fn test_resize_preserves_history_data() {
+        let mut buffer = ScrollbackBuffer::new();
+        buffer.set_dimensions(24, 40); // Start with 40 columns
+
+        // Add history with different widths
+        buffer.add_history_rows(
+            vec![
+                make_row("Hello World"),
+                make_row("This is a longer line that has more text"),
+            ],
+            2,
+        );
+
+        // Verify initial state - rows keep their original width
+        assert_eq!(buffer.len(), 2);
+        let live = make_rows(&["Live"]);
+        let all = buffer.get_all_rows(&live);
+        assert_eq!(all[0].cells.len(), 11); // "Hello World" = 11 chars
+        assert_eq!(all[1].cells.len(), 40); // 40 chars
+
+        // Resize to 80 columns - original data unchanged
+        buffer.set_dimensions(24, 80);
+        let all = buffer.get_all_rows(&live);
+        assert_eq!(all[0].cells.len(), 11); // Still original width
+        assert_eq!(all[1].cells.len(), 40);
+        assert_eq!(all[0].text(), "Hello World");
+
+        // But display rows are adjusted to display width
+        buffer.scroll_by(2);
+        let display = buffer.get_display_rows(&live, 80);
+        assert_eq!(display[0].cells.len(), 80); // Padded for display
+        assert_eq!(display[0].text().trim_end(), "Hello World");
+
+        // Resize to 20 columns - original data STILL preserved
+        buffer.set_dimensions(24, 20);
+        let all = buffer.get_all_rows(&live);
+        assert_eq!(all[0].cells.len(), 11); // Original preserved
+        assert_eq!(all[1].cells.len(), 40); // Original preserved - NOT truncated!
+        assert_eq!(all[1].text(), "This is a longer line that has more text");
+
+        // But display is truncated
+        let display = buffer.get_display_rows(&live, 20);
+        assert_eq!(display[0].cells.len(), 20);
+        assert_eq!(display[1].cells.len(), 20);
+        assert_eq!(display[1].text(), "This is a longer lin"); // Truncated for display only
+
+        // Resize back to 80 - data is RESTORED because we never truncated it
+        buffer.set_dimensions(24, 80);
+        let all = buffer.get_all_rows(&live);
+        assert_eq!(all[1].text(), "This is a longer line that has more text");
+    }
+
+    #[test]
+    fn test_resize_preserves_scroll_offset() {
+        let mut buffer = ScrollbackBuffer::new();
+        buffer.set_dimensions(24, 80);
+
+        // Add lots of history
+        let history: Vec<_> = (0..100).map(|i| make_row(&format!("Line {}", i))).collect();
+        buffer.add_history_rows(history, 100);
+
+        // Scroll up
+        buffer.scroll_by(50);
+        assert_eq!(buffer.offset(), 50);
+
+        // Resize - offset should be preserved
+        buffer.set_dimensions(30, 100);
+        assert_eq!(buffer.offset(), 50);
+
+        // History should still be there
+        assert_eq!(buffer.len(), 100);
     }
 }
