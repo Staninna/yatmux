@@ -225,8 +225,64 @@ impl Renderer {
         self.set_dimensions(rows, cols);
 
         // Capture live screen data and update our scrollback history
-        let (cursor, live_rows, _vt100_scrollback_len) =
+        let (cursor, mut live_rows, _vt100_scrollback_len) =
             self.capture_live_and_update_history(parser, rows, cols)?;
+
+        // Track the vt100 width we captured at
+        let vt100_width = live_rows.first().map(|r| r.cells.len()).unwrap_or(cols);
+
+        // Check if preserved content has any non-whitespace content
+        let preserved_has_content = self
+            .preserved_live_rows
+            .iter()
+            .any(|r| r.cells.iter().any(|(ch, _, _)| !ch.is_whitespace()));
+
+        // When we have preserved content wider than current display, reflow it
+        if self.preserved_width > cols && preserved_has_content {
+            let reflowed = self.reflow_rows(&self.preserved_live_rows.clone(), cols);
+
+            // Replace live_rows with reflowed content
+            // If reflowed has more rows, show bottom part (where prompt would be)
+            let available_rows = live_rows.len();
+            let reflowed_to_skip = reflowed.len().saturating_sub(available_rows);
+
+            for (i, reflowed_row) in reflowed.iter().skip(reflowed_to_skip).enumerate() {
+                if i < live_rows.len() {
+                    live_rows[i] = reflowed_row.clone();
+                }
+            }
+        }
+
+        // Update preserved data when we have actual content
+        let current_content_chars: usize = live_rows
+            .iter()
+            .map(|r| {
+                r.cells
+                    .iter()
+                    .filter(|(ch, _, _)| !ch.is_whitespace())
+                    .count()
+            })
+            .sum();
+
+        let preserved_content_chars: usize = self
+            .preserved_live_rows
+            .iter()
+            .map(|r| {
+                r.cells
+                    .iter()
+                    .filter(|(ch, _, _)| !ch.is_whitespace())
+                    .count()
+            })
+            .sum();
+
+        let should_update = current_content_chars > 0
+            && (vt100_width >= self.preserved_width
+                || current_content_chars > preserved_content_chars + 10);
+
+        if should_update {
+            self.preserved_live_rows = live_rows.clone();
+            self.preserved_width = vt100_width;
+        }
 
         // Get display rows based on current scroll offset
         let display_rows = self.scrollback.get_display_rows(&live_rows, cols);
