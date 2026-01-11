@@ -6,6 +6,7 @@
 //! and losing data when the viewport shrinks).
 
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vt100::Color;
@@ -81,6 +82,7 @@ pub struct Terminal {
     term: Mutex<WezTerminal>,
     pty: Arc<dyn PtyWriter>,
     size: Mutex<(u16, u16)>,
+    generation: AtomicU64,
 }
 
 impl Terminal {
@@ -110,7 +112,16 @@ impl Terminal {
             term: Mutex::new(term),
             pty,
             size: Mutex::new((DEFAULT_ROWS, DEFAULT_COLS)),
+            generation: AtomicU64::new(1),
         }
+    }
+
+    fn bump_generation(&self) {
+        self.generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
     }
 
     /// Writes bytes to the terminal PTY.
@@ -139,6 +150,7 @@ impl Terminal {
         }
 
         self.pty.resize(rows, cols, width as u16, height as u16);
+        self.bump_generation();
     }
 
     /// Processes input bytes through the terminal model (simulates PTY output).
@@ -146,6 +158,7 @@ impl Terminal {
         if let Ok(mut term) = self.term.lock() {
             term.advance_bytes(bytes);
         }
+        self.bump_generation();
     }
 
     /// Clears scrollback history (keeps viewport content).
@@ -153,6 +166,7 @@ impl Terminal {
         if let Ok(mut term) = self.term.lock() {
             term.erase_scrollback();
         }
+        self.bump_generation();
     }
 
     /// Captures the current screen state as a snapshot.
@@ -214,41 +228,73 @@ impl Terminal {
         })
     }
 
-    /// Returns all rows (scrollback + viewport) as snapshots for rendering.
-    pub fn all_rows(&self, cols: usize) -> (Vec<RowSnapshot>, (u16, u16), bool) {
+    pub fn buffer_len(&self) -> usize {
         let term = self.term.lock().unwrap();
-        let screen = term.screen();
+        term.screen().scrollback_rows()
+    }
+
+    pub fn cursor(&self) -> ((u16, u16), bool) {
+        let term = self.term.lock().unwrap();
         let cursor = term.cursor_pos();
-
-        let mut all_rows: Vec<RowSnapshot> = Vec::with_capacity(screen.scrollback_rows());
-        screen.for_each_phys_line(|_idx, line| {
-            let mut cells = Vec::with_capacity(cols);
-
-            for col in 0..cols {
-                if let Some(cell) = line.get_cell(col) {
-                    let grapheme = cell.str();
-                    let ch = grapheme.chars().next().unwrap_or(' ');
-                    let attrs = cell.attrs();
-                    let fg = color_attr_to_vt100(attrs.foreground());
-                    let bg = color_attr_to_vt100(attrs.background());
-                    cells.push((ch, fg, bg));
-                } else {
-                    cells.push((' ', Color::Default, Color::Default));
-                }
-            }
-
-            let tabs = vec![None; cols];
-            all_rows.push(RowSnapshot::new(cells, tabs));
-        });
-
         let cursor_visible = matches!(
             cursor.visibility,
             tattoy_wezterm_surface::CursorVisibility::Visible
         );
+        ((cursor.y.max(0) as u16, cursor.x as u16), cursor_visible)
+    }
 
-        let cursor_tuple = (cursor.y.max(0) as u16, cursor.x as u16);
+    /// Returns a window of rows from the scrollback+viewport buffer.
+    ///
+    /// `start` is an absolute row index (0 = oldest row).
+    pub fn rows_in_range(&self, start: usize, count: usize, cols: usize) -> Vec<RowSnapshot> {
+        if count == 0 {
+            return Vec::new();
+        }
 
-        (all_rows, cursor_tuple, cursor_visible)
+        let term = self.term.lock().unwrap();
+        let screen = term.screen();
+        let buffer_len = screen.scrollback_rows();
+
+        if start >= buffer_len {
+            return Vec::new();
+        }
+
+        let end = (start + count).min(buffer_len);
+        let mut out: Vec<RowSnapshot> = Vec::with_capacity(end - start);
+
+        screen.with_phys_lines(start..end, |lines| {
+            for line in lines {
+                let mut cells = Vec::with_capacity(cols);
+
+                for col in 0..cols {
+                    if let Some(cell) = line.get_cell(col) {
+                        let grapheme = cell.str();
+                        let ch = grapheme.chars().next().unwrap_or(' ');
+                        let attrs = cell.attrs();
+                        let fg = color_attr_to_vt100(attrs.foreground());
+                        let bg = color_attr_to_vt100(attrs.background());
+                        cells.push((ch, fg, bg));
+                    } else {
+                        cells.push((' ', Color::Default, Color::Default));
+                    }
+                }
+
+                let tabs = vec![None; cols];
+                out.push(RowSnapshot::new(cells, tabs));
+            }
+        });
+
+        out
+    }
+
+    /// Returns all rows (scrollback + viewport) as snapshots.
+    ///
+    /// This is relatively expensive; prefer `rows_in_range` for rendering.
+    pub fn all_rows(&self, cols: usize) -> (Vec<RowSnapshot>, (u16, u16), bool) {
+        let buffer_len = self.buffer_len();
+        let rows = self.rows_in_range(0, buffer_len, cols);
+        let (cursor, cursor_visible) = self.cursor();
+        (rows, cursor, cursor_visible)
     }
 
     /// Returns the current screen contents as a string.

@@ -17,7 +17,7 @@ use term::clipboard::{ClipboardProvider, SystemClipboard};
 use term::config::{Action, Config};
 use term::constants::{CELL_H, CELL_W, READ_BUFFER_SIZE};
 use term::keys::key_to_pty_bytes;
-use term::renderer::{Renderer, create_palette};
+use term::renderer::{Renderer, TerminalView, create_palette};
 use term::terminal::Terminal;
 
 /// Custom events for the application.
@@ -68,6 +68,7 @@ struct GraphicsState {
 pub struct App {
     config: Config,
     terminal: Option<Terminal>,
+    view: TerminalView,
     renderer: Renderer,
     clipboard: Box<dyn ClipboardProvider>,
     url_opener: Box<dyn UrlOpener>,
@@ -82,6 +83,7 @@ impl App {
         App {
             config,
             terminal: None,
+            view: TerminalView::new(),
             renderer: Renderer::new(),
             clipboard: Box::new(SystemClipboard::new()),
             url_opener: Box::new(SystemUrlOpener),
@@ -205,10 +207,12 @@ impl App {
             return;
         };
 
-        if let Err(e) = self
-            .renderer
-            .render(&mut graphics.surface, terminal, &graphics.palette)
-        {
+        if let Err(e) = self.renderer.render(
+            &mut graphics.surface,
+            terminal,
+            &graphics.palette,
+            &mut self.view,
+        ) {
             eprintln!("Render error: {e:#}");
         }
     }
@@ -268,7 +272,7 @@ impl App {
         }
 
         // Handle search mode input first
-        if self.renderer.is_search_active() {
+        if self.view.is_search_active() {
             self.handle_search_keyboard(event);
             return;
         }
@@ -297,7 +301,7 @@ impl App {
             if let Some(text) = &event.text {
                 if !text.is_empty() {
                     // Snap to bottom when user types
-                    self.renderer.scrollback_snap_to_bottom();
+                    self.view.scrollback_snap_to_bottom();
                     terminal.write(text.as_bytes());
                     self.request_redraw();
                     return;
@@ -308,7 +312,7 @@ impl App {
         // Special keys (arrows, etc.) that need escape sequences
         if let Some(bytes) = key_to_pty_bytes(&event.logical_key, self.input.modifiers) {
             // Snap to bottom when user types
-            self.renderer.scrollback_snap_to_bottom();
+            self.view.scrollback_snap_to_bottom();
             terminal.write(&bytes);
             self.request_redraw();
         }
@@ -325,29 +329,29 @@ impl App {
             if let Some(action) = self.config.keybinds.get_action(&key_str, ctrl, shift, alt) {
                 match action {
                     Action::SearchClose => {
-                        self.renderer.deactivate_search();
+                        self.view.deactivate_search();
                         self.request_redraw();
                         return;
                     }
                     Action::SearchConfirm => {
-                        if self.renderer.search_match_count() > 0 {
-                            self.renderer.search_next();
+                        if self.view.search_match_count() > 0 {
+                            self.view.search_next();
                         }
                         self.request_redraw();
                         return;
                     }
                     Action::SearchNext => {
-                        self.renderer.search_next();
+                        self.view.search_next();
                         self.request_redraw();
                         return;
                     }
                     Action::SearchPrev => {
-                        self.renderer.search_prev();
+                        self.view.search_prev();
                         self.request_redraw();
                         return;
                     }
                     Action::SearchToggleCase => {
-                        self.renderer.search_toggle_case();
+                        self.view.search_toggle_case();
                         self.request_redraw();
                         return;
                     }
@@ -360,13 +364,13 @@ impl App {
         // Handle text input for search query
         match &event.logical_key {
             Key::Named(NamedKey::Backspace) => {
-                self.renderer.search_pop_char();
+                self.view.search_pop_char();
                 self.request_redraw();
             }
             Key::Character(s) => {
                 if !self.input.modifiers.control_key() && !self.input.modifiers.alt_key() {
                     for ch in s.chars() {
-                        self.renderer.search_push_char(ch);
+                        self.view.search_push_char(ch);
                     }
                     self.request_redraw();
                 }
@@ -381,68 +385,68 @@ impl App {
             Action::Copy => self.handle_copy(),
             Action::Paste => self.handle_paste(),
             Action::ScrollPageUp => {
-                self.renderer.scrollback_scroll_by(24); // Approximate page
+                self.view.scrollback_scroll_by(24); // Approximate page
                 self.request_redraw();
             }
             Action::ScrollPageDown => {
-                self.renderer.scrollback_scroll_by(-24);
+                self.view.scrollback_scroll_by(-24);
                 self.request_redraw();
             }
             Action::ScrollLineUp => {
-                self.renderer.scrollback_scroll_by(1);
+                self.view.scrollback_scroll_by(1);
                 self.request_redraw();
             }
             Action::ScrollLineDown => {
-                self.renderer.scrollback_scroll_by(-1);
+                self.view.scrollback_scroll_by(-1);
                 self.request_redraw();
             }
             Action::ScrollToTop => {
-                self.renderer.scrollback_scroll_by(isize::MAX);
+                self.view.scrollback_scroll_by(isize::MAX);
                 self.request_redraw();
             }
             Action::ScrollToBottom => {
-                self.renderer.scrollback_scroll_by(isize::MIN);
+                self.view.scrollback_scroll_by(isize::MIN);
                 self.request_redraw();
             }
             Action::ClearScrollback => {
                 if let Some(terminal) = &self.terminal {
                     terminal.clear_scrollback();
                 }
-                self.renderer.clear_scrollback();
+                self.view.clear_scrollback();
                 self.request_redraw();
             }
             Action::Reset => {
                 if let Some(terminal) = &self.terminal {
                     terminal.clear_scrollback();
                 }
-                self.renderer.clear_scrollback();
-                self.renderer.clear_selection();
+                self.view.clear_scrollback();
+                self.view.clear_selection();
                 self.request_redraw();
             }
             Action::SearchFind => {
-                self.renderer.activate_search();
+                self.view.activate_search();
                 self.request_redraw();
             }
             // Search mode actions - only meaningful when search is active
             Action::SearchClose => {
-                self.renderer.deactivate_search();
+                self.view.deactivate_search();
                 self.request_redraw();
             }
             Action::SearchNext => {
-                self.renderer.search_next();
+                self.view.search_next();
                 self.request_redraw();
             }
             Action::SearchPrev => {
-                self.renderer.search_prev();
+                self.view.search_prev();
                 self.request_redraw();
             }
             Action::SearchToggleCase => {
-                self.renderer.search_toggle_case();
+                self.view.search_toggle_case();
                 self.request_redraw();
             }
             Action::SearchConfirm => {
-                if self.renderer.search_match_count() > 0 {
-                    self.renderer.search_next();
+                if self.view.search_match_count() > 0 {
+                    self.view.search_next();
                 }
                 self.request_redraw();
             }
@@ -463,7 +467,7 @@ impl App {
 
     /// Handles copy to clipboard.
     fn handle_copy(&mut self) {
-        if let Some(text) = self.renderer.get_selected_text() {
+        if let Some(text) = self.view.get_selected_text() {
             if self.clipboard.write(&text) {
                 eprintln!("Copied {} characters to clipboard", text.len());
             }
@@ -480,10 +484,10 @@ impl App {
             ElementState::Pressed => {
                 // Check for URL click first
                 if let Some((row, col)) = self
-                    .renderer
+                    .view
                     .window_to_cell(self.input.cursor_position.x, self.input.cursor_position.y)
                 {
-                    if let Some(url) = self.renderer.url_at(row, col) {
+                    if let Some(url) = self.view.url_at(row, col) {
                         // Open URL in browser
                         if let Err(e) = self.url_opener.open(&url) {
                             eprintln!("Failed to open URL: {e}");
@@ -493,7 +497,7 @@ impl App {
 
                     // Start selection
                     self.input.mouse_selecting = true;
-                    self.renderer.start_selection(row, col);
+                    self.view.start_selection(row, col);
                     self.request_redraw();
                 }
             }
@@ -508,19 +512,19 @@ impl App {
         self.input.cursor_position = position;
 
         if self.input.mouse_selecting {
-            if let Some((row, col)) = self.renderer.window_to_cell(position.x, position.y) {
-                self.renderer.update_selection(row, col);
+            if let Some((row, col)) = self.view.window_to_cell(position.x, position.y) {
+                self.view.update_selection(row, col);
                 self.request_redraw();
             }
         } else {
             // Update URL hover state
-            if let Some((row, col)) = self.renderer.window_to_cell(position.x, position.y) {
-                if self.renderer.update_url_hover(row, col) {
+            if let Some((row, col)) = self.view.window_to_cell(position.x, position.y) {
+                if self.view.update_url_hover(row, col) {
                     self.request_redraw();
                     self.update_cursor();
                 }
             } else {
-                self.renderer.clear_url_hover();
+                self.view.clear_url_hover();
                 self.update_cursor();
             }
         }
@@ -529,7 +533,7 @@ impl App {
     /// Updates the cursor icon based on hover state.
     fn update_cursor(&self) {
         if let Some(graphics) = &self.graphics {
-            let cursor = if self.renderer.has_hovered_url() {
+            let cursor = if self.view.has_hovered_url() {
                 CursorIcon::Pointer
             } else {
                 CursorIcon::Text
@@ -548,7 +552,7 @@ impl App {
         };
 
         if lines != 0 {
-            self.renderer.scrollback_scroll_by(lines);
+            self.view.scrollback_scroll_by(lines);
             self.request_redraw();
         }
     }
