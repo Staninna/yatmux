@@ -163,6 +163,10 @@ impl App {
             return;
         }
 
+        // Preserve content before vt100 resize (which may truncate)
+        self.renderer
+            .preserve_content_before_resize(&terminal.parser());
+
         terminal.resize(width, height, CELL_W, CELL_H);
     }
 
