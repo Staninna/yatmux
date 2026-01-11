@@ -13,7 +13,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{CursorIcon, Window, WindowId};
 
-use term::clipboard::{read_clipboard_text, write_clipboard_text};
+use term::clipboard::{ClipboardProvider, SystemClipboard};
 use term::config::{Action, Config};
 use term::constants::{CELL_H, CELL_W, READ_BUFFER_SIZE};
 use term::keys::key_to_pty_bytes;
@@ -21,10 +21,22 @@ use term::renderer::{Renderer, create_palette};
 use term::terminal::Terminal;
 
 /// Custom events for the application.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum AppEvent {
-    /// PTY has new output to display.
-    PtyOutput,
+    /// PTY has produced output bytes.
+    PtyOutput(Vec<u8>),
+}
+
+trait UrlOpener: Send + Sync {
+    fn open(&self, url: &str) -> anyhow::Result<()>;
+}
+
+struct SystemUrlOpener;
+
+impl UrlOpener for SystemUrlOpener {
+    fn open(&self, url: &str) -> anyhow::Result<()> {
+        open::that(url).map_err(anyhow::Error::from)
+    }
 }
 
 /// Input state for mouse and keyboard.
@@ -57,6 +69,8 @@ pub struct App {
     config: Config,
     terminal: Option<Terminal>,
     renderer: Renderer,
+    clipboard: Box<dyn ClipboardProvider>,
+    url_opener: Box<dyn UrlOpener>,
     graphics: Option<GraphicsState>,
     input: InputState,
     event_proxy: Option<EventLoopProxy<AppEvent>>,
@@ -69,6 +83,8 @@ impl App {
             config,
             terminal: None,
             renderer: Renderer::new(),
+            clipboard: Box::new(SystemClipboard::new()),
+            url_opener: Box::new(SystemUrlOpener),
             graphics: None,
             input: InputState::default(),
             event_proxy: None,
@@ -90,11 +106,14 @@ impl App {
             }
         };
 
-        let terminal = Terminal::new(Arc::new(pty));
+        let terminal = Terminal::new_with_scrollback(
+            Arc::new(pty),
+            self.config.terminal.scrollback_lines as usize,
+        );
 
         // Start PTY reader thread
         if let Some(proxy) = &self.event_proxy {
-            spawn_pty_reader(reader, terminal.parser(), proxy.clone());
+            spawn_pty_reader(reader, proxy.clone());
         }
 
         self.terminal = Some(terminal);
@@ -163,11 +182,18 @@ impl App {
             return;
         }
 
-        // Preserve content before vt100 resize (which may truncate)
-        self.renderer
-            .preserve_content_before_resize(&terminal.parser());
+        // IMPORTANT: compute terminal size from the actual render buffer.
+        // On some platforms/scales, `inner_size()` can diverge from the buffer size,
+        // leading to a PTY that thinks it's only a few columns wide.
+        let (buffer_width, buffer_height) = match graphics.surface.buffer_mut() {
+            Ok(buffer) => (buffer.width().get(), buffer.height().get()),
+            Err(e) => {
+                eprintln!("softbuffer buffer_mut failed during resize: {e:?}");
+                return;
+            }
+        };
 
-        terminal.resize(width, height, CELL_W, CELL_H);
+        terminal.resize(buffer_width, buffer_height, CELL_W, CELL_H);
     }
 
     /// Renders the terminal.
@@ -179,9 +205,9 @@ impl App {
             return;
         };
 
-        if let Err(e) =
-            self.renderer
-                .render(&mut graphics.surface, &terminal.parser(), &graphics.palette)
+        if let Err(e) = self
+            .renderer
+            .render(&mut graphics.surface, terminal, &graphics.palette)
         {
             eprintln!("Render error: {e:#}");
         }
@@ -379,11 +405,16 @@ impl App {
                 self.request_redraw();
             }
             Action::ClearScrollback => {
+                if let Some(terminal) = &self.terminal {
+                    terminal.clear_scrollback();
+                }
                 self.renderer.clear_scrollback();
                 self.request_redraw();
             }
             Action::Reset => {
-                // Reset terminal state - could be expanded
+                if let Some(terminal) = &self.terminal {
+                    terminal.clear_scrollback();
+                }
                 self.renderer.clear_scrollback();
                 self.renderer.clear_selection();
                 self.request_redraw();
@@ -421,7 +452,7 @@ impl App {
     /// Handles paste from clipboard.
     fn handle_paste(&mut self) {
         if let Some(terminal) = &self.terminal {
-            if let Some(text) = read_clipboard_text() {
+            if let Some(text) = self.clipboard.read() {
                 if !text.is_empty() {
                     terminal.write(text.as_bytes());
                     self.request_redraw();
@@ -433,7 +464,7 @@ impl App {
     /// Handles copy to clipboard.
     fn handle_copy(&mut self) {
         if let Some(text) = self.renderer.get_selected_text() {
-            if write_clipboard_text(&text) {
+            if self.clipboard.write(&text) {
                 eprintln!("Copied {} characters to clipboard", text.len());
             }
         }
@@ -454,7 +485,7 @@ impl App {
                 {
                     if let Some(url) = self.renderer.url_at(row, col) {
                         // Open URL in browser
-                        if let Err(e) = open::that(&url) {
+                        if let Err(e) = self.url_opener.open(&url) {
                             eprintln!("Failed to open URL: {e}");
                         }
                         return;
@@ -538,7 +569,10 @@ impl ApplicationHandler<AppEvent> for App {
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
-            AppEvent::PtyOutput => {
+            AppEvent::PtyOutput(bytes) => {
+                if let Some(terminal) = &self.terminal {
+                    terminal.process(&bytes);
+                }
                 self.request_redraw();
             }
         }
@@ -590,11 +624,7 @@ impl ApplicationHandler<AppEvent> for App {
 }
 
 /// Spawns a thread to read PTY output and send events.
-fn spawn_pty_reader(
-    mut reader: Box<dyn Read + Send>,
-    parser: std::sync::Arc<std::sync::Mutex<vt100::Parser>>,
-    proxy: EventLoopProxy<AppEvent>,
-) {
+fn spawn_pty_reader(mut reader: Box<dyn Read + Send>, proxy: EventLoopProxy<AppEvent>) {
     thread::spawn(move || {
         let mut buf = [0u8; READ_BUFFER_SIZE];
         loop {
@@ -604,11 +634,7 @@ fn spawn_pty_reader(
                 Err(_) => break,
             };
 
-            if let Ok(mut p) = parser.lock() {
-                p.process(&buf[..n]);
-            }
-
-            let _ = proxy.send_event(AppEvent::PtyOutput);
+            let _ = proxy.send_event(AppEvent::PtyOutput(buf[..n].to_vec()));
         }
     });
 }

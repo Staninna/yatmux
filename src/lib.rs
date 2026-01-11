@@ -5,6 +5,7 @@
 pub mod clipboard;
 pub mod config;
 pub mod constants;
+pub mod core;
 pub mod keys;
 pub mod pty;
 pub mod renderer;
