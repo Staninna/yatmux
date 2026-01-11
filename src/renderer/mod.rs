@@ -50,6 +50,11 @@ pub struct Renderer {
     view_cols: usize,
     /// Cached display rows from last render (for copy operations).
     last_display_rows: Vec<RowSnapshot>,
+    /// Shadow copy of live rows at their maximum width.
+    /// This preserves content when terminal is resized smaller.
+    preserved_live_rows: Vec<RowSnapshot>,
+    /// The width at which preserved_live_rows was last updated.
+    preserved_width: usize,
 }
 
 impl Default for Renderer {
@@ -69,6 +74,8 @@ impl Renderer {
             view_rows: 0,
             view_cols: 0,
             last_display_rows: Vec::new(),
+            preserved_live_rows: Vec::new(),
+            preserved_width: 0,
         }
     }
 
@@ -477,6 +484,78 @@ impl Renderer {
     /// Returns true if scrolled up in history.
     pub fn is_scrolled_up(&self) -> bool {
         self.scrollback.is_scrolled_up()
+    }
+
+    /// Preserves the current live screen content before a resize.
+    /// Call this BEFORE resizing the vt100 parser to prevent data loss.
+    pub fn preserve_content_before_resize(&mut self, parser: &Arc<Mutex<vt100::Parser>>) {
+        let Ok(parser) = parser.lock() else {
+            return;
+        };
+
+        let screen = parser.screen();
+        let (rows, cols) = screen.size();
+        let rows = rows as usize;
+        let cols = cols as usize;
+
+        // Capture current screen content
+        let mut current_rows = Vec::with_capacity(rows);
+        let mut current_content_chars = 0usize;
+        for row in 0..rows {
+            let (row_cells, row_tabs) = Self::capture_row_data_static(&screen, row, cols);
+            current_content_chars += row_cells
+                .iter()
+                .filter(|(ch, _, _)| !ch.is_whitespace())
+                .count();
+            current_rows.push(RowSnapshot::new(row_cells, row_tabs));
+        }
+
+        // Count content in preserved rows
+        let preserved_content_chars: usize = self
+            .preserved_live_rows
+            .iter()
+            .map(|row| {
+                row.cells
+                    .iter()
+                    .take(cols)
+                    .filter(|(ch, _, _)| !ch.is_whitespace())
+                    .count()
+            })
+            .sum();
+
+        // Update preserved data if we have content and either:
+        // 1. Current width >= preserved width, OR
+        // 2. Current has more content than preserved
+        let should_update = current_content_chars > 0
+            && (cols >= self.preserved_width || current_content_chars > preserved_content_chars);
+
+        if should_update {
+            // If narrower but more content, merge with old preserved tails
+            if cols < self.preserved_width && !self.preserved_live_rows.is_empty() {
+                for (i, current_row) in current_rows.iter_mut().enumerate() {
+                    if let Some(preserved) = self.preserved_live_rows.get(i) {
+                        if preserved.cells.len() > current_row.cells.len() {
+                            let original_len = current_row.cells.len();
+                            current_row
+                                .cells
+                                .extend_from_slice(&preserved.cells[original_len..]);
+                            if original_len < preserved.tabs.len() {
+                                current_row
+                                    .tabs
+                                    .extend_from_slice(&preserved.tabs[original_len..]);
+                            }
+                            while current_row.tabs.len() < current_row.cells.len() {
+                                current_row.tabs.push(None);
+                            }
+                        }
+                    }
+                }
+            } else {
+                self.preserved_width = cols;
+            }
+
+            self.preserved_live_rows = current_rows;
+        }
     }
 
     /// Starts a text selection at the given cell position.
