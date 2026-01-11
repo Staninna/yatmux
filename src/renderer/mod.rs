@@ -35,9 +35,40 @@ use scrollback::RowSnapshot;
 use selection::SelectionManager;
 use url::UrlManager;
 
+use crate::core::color_codes::ColorCodeManager;
+
 /// Search highlight colors.
 const SEARCH_MATCH_BG: u32 = 0x4A4A00; // Dark yellow for regular matches
 const SEARCH_CURRENT_BG: u32 = 0x806000; // Brighter yellow for current match
+
+fn srgb_channel_to_linear(v: f32) -> f32 {
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        ((v + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn relative_luminance(rgb: u32) -> f32 {
+    let r = ((rgb >> 16) & 0xFF) as f32 / 255.0;
+    let g = ((rgb >> 8) & 0xFF) as f32 / 255.0;
+    let b = (rgb & 0xFF) as f32 / 255.0;
+
+    let r = srgb_channel_to_linear(r);
+    let g = srgb_channel_to_linear(g);
+    let b = srgb_channel_to_linear(b);
+
+    0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+fn contrast_color(bg: u32) -> u32 {
+    // Use a WCAG-ish cutoff; doesn't need to be perfect.
+    if relative_luminance(bg) < 0.5 {
+        0xFFFFFF
+    } else {
+        0x000000
+    }
+}
 
 struct RenderFrame {
     cursor: (u16, u16),
@@ -54,6 +85,7 @@ struct RenderFrame {
 pub struct TerminalView {
     selection: SelectionManager,
     urls: UrlManager,
+    color_codes: ColorCodeManager,
     search: SearchState,
     view_rows: usize,
     view_cols: usize,
@@ -66,6 +98,7 @@ pub struct TerminalView {
     /// Cached search inputs to avoid re-indexing every frame.
     last_search_query: String,
     last_search_terminal_generation: u64,
+    last_search_case_sensitive: bool,
 }
 
 impl Default for TerminalView {
@@ -79,6 +112,7 @@ impl TerminalView {
         TerminalView {
             selection: SelectionManager::new(),
             urls: UrlManager::new(),
+            color_codes: ColorCodeManager::new(),
             search: SearchState::new(),
             view_rows: 0,
             view_cols: 0,
@@ -87,6 +121,7 @@ impl TerminalView {
             last_display_rows: Vec::new(),
             last_search_query: String::new(),
             last_search_terminal_generation: 0,
+            last_search_case_sensitive: false,
         }
     }
 
@@ -96,6 +131,7 @@ impl TerminalView {
             self.view_cols = cols;
             self.selection.set_dimensions(rows, cols);
             self.urls.set_dimensions(rows);
+            self.color_codes.set_dimensions(rows);
 
             // Clamp scroll offset to new viewport size.
             self.scroll_offset = self.scroll_offset.min(self.max_scroll_offset());
@@ -147,20 +183,25 @@ impl TerminalView {
         // Update search matches when search is active and inputs changed.
         if self.search.is_active() {
             let query = self.search.query().to_string();
+            let case_sensitive = self.search.is_case_sensitive();
+
             if query != self.last_search_query
                 || terminal_generation != self.last_search_terminal_generation
+                || case_sensitive != self.last_search_case_sensitive
             {
                 let all_rows = terminal.rows_in_range(0, buffer_len, cols);
                 self.search.update_matches(&all_rows);
                 self.last_search_query = query;
                 self.last_search_terminal_generation = terminal_generation;
+                self.last_search_case_sensitive = case_sensitive;
             }
         }
 
-        // Detect URLs in each visible row.
+        // Detect URLs and hex color codes in each visible row.
         for (row_idx, row_data) in display_rows.iter().enumerate() {
             let text: String = row_data.cells.iter().map(|(ch, _, _)| ch).collect();
             self.urls.update_row(row_idx, &text);
+            self.color_codes.update_row(row_idx, &text);
         }
 
         let (cursor, cursor_visible) = terminal.cursor();
@@ -457,6 +498,7 @@ impl Renderer {
                 let selected = view.selection.is_selected(row_idx, col);
                 let is_url = view.urls.is_url(row_idx, col);
                 let is_url_hovered = view.urls.is_hovered(row_idx, col);
+                let hex_bg = view.color_codes.color_at(row_idx, col);
 
                 let search_match = view.search.is_match(row_idx, col, frame.view_start);
 
@@ -475,6 +517,7 @@ impl Renderer {
                     selected,
                     is_url,
                     is_url_hovered,
+                    hex_bg,
                     search_match,
                 );
             }
@@ -501,21 +544,38 @@ impl Renderer {
         selected: bool,
         is_url: bool,
         is_url_hovered: bool,
+        hex_bg: Option<u32>,
         search_match: Option<bool>,
     ) {
         let fg = color_to_u32(fg_color, DEFAULT_FG_COLOR, palette);
         let bg = color_to_u32(bg_color, DEFAULT_BG_COLOR, palette);
 
-        let (fg, bg) = if invert { (bg, fg) } else { (fg, bg) };
-
-        let fg = if is_url { 0x6699FF } else { fg };
-
-        let fill_color = match search_match {
+        let mut fill_color = match search_match {
             Some(true) => SEARCH_CURRENT_BG,
             Some(false) => SEARCH_MATCH_BG,
             None if selected || tab_info.is_some() => lighten_color(bg),
             None => bg,
         };
+
+        // If this cell is part of a hex color literal, render it like a "swatch"
+        // by using the hex value as the background color, but only when not
+        // overridden by selection/search highlighting.
+        let mut fg = fg;
+        if matches!(search_match, None) && !selected && tab_info.is_none() {
+            if let Some(hex) = hex_bg {
+                fill_color = hex;
+                fg = contrast_color(hex);
+            }
+        }
+
+        // Handle cursor inversion after picking final fg/bg.
+        let (fg, fill_color) = if invert {
+            (fill_color, fg)
+        } else {
+            (fg, fill_color)
+        };
+
+        let fg = if is_url { 0x6699FF } else { fg };
 
         let x0 = col * CELL_W;
         let y0 = row * CELL_H;
