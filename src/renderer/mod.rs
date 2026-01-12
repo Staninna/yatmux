@@ -24,9 +24,7 @@ use anyhow::Result;
 use softbuffer::Surface;
 use vt100::Color;
 
-use crate::constants::{
-    CELL_H, CELL_W, DEFAULT_BG_COLOR, DEFAULT_FG_COLOR, FONT_SCALE, GLYPH_H, GLYPH_W,
-};
+use crate::constants::{DEFAULT_BG_COLOR, DEFAULT_FG_COLOR, GLYPH_H, GLYPH_W};
 use crate::terminal::Terminal;
 
 use color::{color_to_u32, lighten_color};
@@ -267,13 +265,22 @@ impl TerminalView {
         self.selection.update(row, col);
     }
 
-    pub fn window_to_cell(&self, x: f64, y: f64) -> Option<(usize, usize)> {
+    pub fn window_to_cell(
+        &self,
+        x: f64,
+        y: f64,
+        cell_w: usize,
+        cell_h: usize,
+    ) -> Option<(usize, usize)> {
         if self.view_rows == 0 || self.view_cols == 0 {
             return None;
         }
 
-        let col = (x as usize) / CELL_W;
-        let row = (y as usize) / CELL_H;
+        let cell_w = cell_w.max(1);
+        let cell_h = cell_h.max(1);
+
+        let col = (x as usize) / cell_w;
+        let row = (y as usize) / cell_h;
 
         if row >= self.view_rows || col >= self.view_cols {
             return None;
@@ -458,16 +465,23 @@ impl Renderer {
         origin_y: usize,
         region_w: usize,
         region_h: usize,
+        cell_w: usize,
+        cell_h: usize,
+        font_scale: usize,
         terminal: &Terminal,
         palette: &Arc<[u32; 256]>,
         view: &mut TerminalView,
     ) -> Result<()> {
-        if region_w < CELL_W || region_h < CELL_H {
+        let cell_w = cell_w.max(1);
+        let cell_h = cell_h.max(1);
+        let font_scale = font_scale.clamp(1, 8);
+
+        if region_w < cell_w || region_h < cell_h {
             return Ok(());
         }
 
-        let rows = region_h / CELL_H;
-        let cols = region_w / CELL_W;
+        let rows = region_h / cell_h;
+        let cols = region_w / cell_w;
         view.set_dimensions(rows, cols);
 
         let frame = view.build_frame(terminal, rows, cols)?;
@@ -479,6 +493,9 @@ impl Renderer {
             origin_y,
             region_w,
             region_h,
+            cell_w,
+            cell_h,
+            font_scale,
             &frame,
             palette,
             view,
@@ -493,6 +510,7 @@ impl Renderer {
         terminal: &Terminal,
         palette: &Arc<[u32; 256]>,
         view: &mut TerminalView,
+        font_scale: usize,
     ) -> Result<()> {
         let mut buffer = surface
             .buffer_mut()
@@ -502,6 +520,10 @@ impl Renderer {
         let buffer_height = buffer.height().get() as usize;
         buffer.fill(DEFAULT_BG_COLOR);
 
+        let font_scale = font_scale.clamp(1, 8);
+        let cell_w = 8 * font_scale;
+        let cell_h = 8 * font_scale;
+
         self.paint_terminal_region(
             &mut buffer,
             buffer_width,
@@ -510,6 +532,9 @@ impl Renderer {
             0,
             buffer_width,
             buffer_height,
+            cell_w,
+            cell_h,
+            font_scale,
             terminal,
             palette,
             view,
@@ -531,8 +556,13 @@ impl Renderer {
         sections: &[HelpSection],
         scroll_offset: usize,
         accent_color: u32,
+        font_scale: usize,
     ) -> (usize, usize) {
-        if buffer_width < CELL_W * 10 || buffer_height < CELL_H * 5 {
+        let font_scale = font_scale.clamp(1, 8);
+        let cell_w = 8 * font_scale;
+        let cell_h = 8 * font_scale;
+
+        if buffer_width < cell_w * 10 || buffer_height < cell_h * 5 {
             return (0, 0);
         }
 
@@ -559,12 +589,12 @@ impl Renderer {
             }
         }
 
-        let box_cols = (max_line_len + padding_cells_x * 2).min(buffer_width / CELL_W);
+        let box_cols = (max_line_len + padding_cells_x * 2).min(buffer_width / cell_w);
         let total_rows = fixed_lines.len() + content_lines.len() + padding_cells_y * 2;
-        let box_rows = total_rows.min(buffer_height / CELL_H);
+        let box_rows = total_rows.min(buffer_height / cell_h);
 
-        let box_w = box_cols * CELL_W;
-        let box_h = box_rows * CELL_H;
+        let box_w = box_cols * cell_w;
+        let box_h = box_rows * cell_h;
         let origin_x = buffer_width.saturating_sub(box_w) / 2;
         let origin_y = buffer_height.saturating_sub(box_h) / 2;
 
@@ -599,8 +629,8 @@ impl Renderer {
 
         // Scrollbar (only when there is overflow)
         if max_scroll > 0 && content_rows > 0 {
-            let track_y0 = origin_y + padding_cells_y * CELL_H + fixed_lines.len() * CELL_H;
-            let track_y1 = origin_y + box_h - padding_cells_y * CELL_H;
+            let track_y0 = origin_y + padding_cells_y * cell_h + fixed_lines.len() * cell_h;
+            let track_y1 = origin_y + box_h - padding_cells_y * cell_h;
             let track_y0 = track_y0.min(buffer_height.saturating_sub(1));
             let track_y1 = track_y1.min(buffer_height);
 
@@ -610,7 +640,7 @@ impl Renderer {
                 let visible = content_rows.min(total);
 
                 let mut thumb_h = (track_h * visible) / total;
-                thumb_h = thumb_h.max(CELL_H).min(track_h);
+                thumb_h = thumb_h.max(cell_h).min(track_h);
 
                 let travel = track_h.saturating_sub(thumb_h);
                 let thumb_y0 = if max_scroll == 0 {
@@ -646,15 +676,15 @@ impl Renderer {
 
         // Text
         let text_color = 0xFFFFFF;
-        let mut y = origin_y + padding_cells_y * CELL_H;
+        let mut y = origin_y + padding_cells_y * cell_h;
 
         for (idx, line) in fixed_lines.iter().enumerate() {
             if idx + padding_cells_y >= box_rows {
                 break;
             }
-            let mut x = origin_x + padding_cells_x * CELL_W;
+            let mut x = origin_x + padding_cells_x * cell_w;
             for ch in line.chars() {
-                if x + CELL_W > origin_x + box_w - padding_cells_x * CELL_W {
+                if x + cell_w > origin_x + box_w - padding_cells_x * cell_w {
                     break;
                 }
                 let glyph = font::get_glyph(ch);
@@ -666,14 +696,15 @@ impl Renderer {
                     origin_y,
                     box_w,
                     box_h,
+                    font_scale,
                     x,
                     y,
                     glyph,
                     text_color,
                 );
-                x += CELL_W;
+                x += cell_w;
             }
-            y += CELL_H;
+            y += cell_h;
         }
 
         for (idx, line) in content_lines
@@ -686,9 +717,9 @@ impl Renderer {
             if overall_idx + padding_cells_y >= box_rows {
                 break;
             }
-            let mut x = origin_x + padding_cells_x * CELL_W;
+            let mut x = origin_x + padding_cells_x * cell_w;
             for ch in line.chars() {
-                if x + CELL_W > origin_x + box_w - padding_cells_x * CELL_W {
+                if x + cell_w > origin_x + box_w - padding_cells_x * cell_w {
                     break;
                 }
                 let glyph = font::get_glyph(ch);
@@ -700,14 +731,15 @@ impl Renderer {
                     origin_y,
                     box_w,
                     box_h,
+                    font_scale,
                     x,
                     y,
                     glyph,
                     text_color,
                 );
-                x += CELL_W;
+                x += cell_w;
             }
-            y += CELL_H;
+            y += cell_h;
         }
 
         (scroll, max_scroll)
@@ -722,6 +754,9 @@ impl Renderer {
         origin_y: usize,
         region_w: usize,
         region_h: usize,
+        cell_w: usize,
+        cell_h: usize,
+        font_scale: usize,
         frame: &RenderFrame,
         palette: &[u32; 256],
         view: &TerminalView,
@@ -750,6 +785,9 @@ impl Renderer {
                     origin_y,
                     region_w,
                     region_h,
+                    cell_w,
+                    cell_h,
+                    font_scale,
                     row_idx,
                     col,
                     ch,
@@ -776,6 +814,9 @@ impl Renderer {
                 origin_y,
                 region_w,
                 region_h,
+                cell_w,
+                cell_h,
+                font_scale,
                 view,
             );
         }
@@ -790,6 +831,9 @@ impl Renderer {
         origin_y: usize,
         region_w: usize,
         region_h: usize,
+        cell_w: usize,
+        cell_h: usize,
+        font_scale: usize,
         row: usize,
         col: usize,
         ch: char,
@@ -834,8 +878,8 @@ impl Renderer {
 
         let fg = if is_url { 0x6699FF } else { fg };
 
-        let x0 = origin_x + col * CELL_W;
-        let y0 = origin_y + row * CELL_H;
+        let x0 = origin_x + col * cell_w;
+        let y0 = origin_y + row * cell_h;
 
         let clip_right = (origin_x + region_w).min(width);
         let clip_bottom = (origin_y + region_h).min(height);
@@ -844,8 +888,8 @@ impl Renderer {
             return;
         }
 
-        for y in y0..(y0 + CELL_H).min(clip_bottom) {
-            for x in x0..(x0 + CELL_W).min(clip_right) {
+        for y in y0..(y0 + cell_h).min(clip_bottom) {
+            for x in x0..(x0 + cell_w).min(clip_right) {
                 backbuffer[y * width + x] = fill_color;
             }
         }
@@ -863,6 +907,7 @@ impl Renderer {
                     region_h,
                     x0,
                     y0,
+                    font_scale,
                     tab_indicator_glyph(),
                     tab_fg,
                 );
@@ -872,13 +917,14 @@ impl Renderer {
 
         let glyph = font::get_glyph(ch);
         self.draw_glyph(
-            backbuffer, width, height, origin_x, origin_y, region_w, region_h, x0, y0, glyph, fg,
+            backbuffer, width, height, origin_x, origin_y, region_w, region_h, font_scale, x0, y0,
+            glyph, fg,
         );
 
         if is_url_hovered {
-            let underline_y = y0 + CELL_H - 2;
+            let underline_y = y0 + cell_h - 2;
             if underline_y < clip_bottom {
-                for x in x0..(x0 + CELL_W).min(clip_right) {
+                for x in x0..(x0 + cell_w).min(clip_right) {
                     backbuffer[underline_y * width + x] = fg;
                 }
             }
@@ -894,6 +940,7 @@ impl Renderer {
         origin_y: usize,
         region_w: usize,
         region_h: usize,
+        font_scale: usize,
         x0: usize,
         y0: usize,
         glyph: [u8; 8],
@@ -901,6 +948,8 @@ impl Renderer {
     ) {
         let clip_right = (origin_x + region_w).min(width);
         let clip_bottom = (origin_y + region_h).min(height);
+
+        let font_scale = font_scale.clamp(1, 8);
 
         for gy in 0..GLYPH_H {
             let bits = glyph[gy];
@@ -910,10 +959,10 @@ impl Renderer {
                     continue;
                 }
 
-                for sy in 0..FONT_SCALE {
-                    for sx in 0..FONT_SCALE {
-                        let x = x0 + gx * FONT_SCALE + sx;
-                        let y = y0 + gy * FONT_SCALE + sy;
+                for sy in 0..font_scale {
+                    for sx in 0..font_scale {
+                        let x = x0 + gx * font_scale + sx;
+                        let y = y0 + gy * font_scale + sy;
                         if x < clip_right && y < clip_bottom {
                             backbuffer[y * width + x] = color;
                         }
@@ -932,9 +981,12 @@ impl Renderer {
         origin_y: usize,
         region_w: usize,
         region_h: usize,
+        cell_w: usize,
+        cell_h: usize,
+        font_scale: usize,
         view: &TerminalView,
     ) {
-        let bar_height = CELL_H;
+        let bar_height = cell_h;
         let bar_y = origin_y + region_h.saturating_sub(bar_height);
         let clip_right = (origin_x + region_w).min(width);
         let clip_bottom = (origin_y + region_h).min(height);
@@ -951,33 +1003,33 @@ impl Renderer {
         }
 
         let prefix = "Find: ";
-        let mut x_pos = origin_x + CELL_W / 2;
+        let mut x_pos = origin_x + cell_w / 2;
         for ch in prefix.chars() {
-            if x_pos + CELL_W > clip_right {
+            if x_pos + cell_w > clip_right {
                 break;
             }
             let glyph = font::get_glyph(ch);
             self.draw_glyph(
-                buffer, width, height, origin_x, origin_y, region_w, region_h, x_pos, bar_y, glyph,
-                text_color,
+                buffer, width, height, origin_x, origin_y, region_w, region_h, font_scale, x_pos,
+                bar_y, glyph, text_color,
             );
-            x_pos += CELL_W;
+            x_pos += cell_w;
         }
 
         for ch in view.search.query().chars() {
-            if x_pos + CELL_W > clip_right.saturating_sub(100) {
+            if x_pos + cell_w > clip_right.saturating_sub(100) {
                 break;
             }
             let glyph = font::get_glyph(ch);
             self.draw_glyph(
-                buffer, width, height, origin_x, origin_y, region_w, region_h, x_pos, bar_y, glyph,
-                text_color,
+                buffer, width, height, origin_x, origin_y, region_w, region_h, font_scale, x_pos,
+                bar_y, glyph, text_color,
             );
-            x_pos += CELL_W;
+            x_pos += cell_w;
         }
 
         let cursor_x = x_pos;
-        for y in bar_y.min(clip_bottom)..(bar_y + CELL_H).min(clip_bottom) {
+        for y in bar_y.min(clip_bottom)..(bar_y + cell_h).min(clip_bottom) {
             if cursor_x < clip_right {
                 buffer[y * width + cursor_x] = text_color;
             }
@@ -999,12 +1051,12 @@ impl Renderer {
             case_indicator.to_string()
         };
 
-        let info_width = match_info.len() * CELL_W;
-        let info_x = clip_right.saturating_sub(info_width + CELL_W);
+        let info_width = match_info.len() * cell_w;
+        let info_x = clip_right.saturating_sub(info_width + cell_w);
 
         let mut x_pos = info_x;
         for ch in match_info.chars() {
-            if x_pos + CELL_W > clip_right {
+            if x_pos + cell_w > clip_right {
                 break;
             }
             let glyph = font::get_glyph(ch);
@@ -1016,12 +1068,13 @@ impl Renderer {
                 origin_y,
                 region_w,
                 region_h,
+                font_scale,
                 x_pos,
                 bar_y,
                 glyph,
                 match_info_color,
             );
-            x_pos += CELL_W;
+            x_pos += cell_w;
         }
     }
 }
@@ -1040,16 +1093,18 @@ mod tests {
         let mut view = TerminalView::new();
         view.set_dimensions(24, 80);
 
-        assert_eq!(view.window_to_cell(0.0, 0.0), Some((0, 0)));
-        assert_eq!(view.window_to_cell(8.0, 8.0), Some((0, 0)));
-        assert_eq!(view.window_to_cell(17.0, 17.0), Some((1, 1)));
+        let cell = 8 * 2;
+        assert_eq!(view.window_to_cell(0.0, 0.0, cell, cell), Some((0, 0)));
+        assert_eq!(view.window_to_cell(8.0, 8.0, cell, cell), Some((0, 0)));
+        assert_eq!(view.window_to_cell(17.0, 17.0, cell, cell), Some((1, 1)));
     }
 
     #[test]
     fn test_window_to_cell_out_of_bounds() {
         let mut view = TerminalView::new();
         view.set_dimensions(24, 80);
-        assert_eq!(view.window_to_cell(10000.0, 10000.0), None);
+        let cell = 8 * 2;
+        assert_eq!(view.window_to_cell(10000.0, 10000.0, cell, cell), None);
     }
 
     #[test]

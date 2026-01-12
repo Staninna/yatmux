@@ -16,7 +16,7 @@ use winit::window::{CursorIcon, Window, WindowId};
 
 use term::clipboard::{ClipboardProvider, SystemClipboard};
 use term::config::{Action, Config};
-use term::constants::{CELL_H, CELL_W, READ_BUFFER_SIZE};
+use term::constants::{CELL_H, READ_BUFFER_SIZE};
 use term::keys::key_to_pty_bytes;
 use term::renderer::{HelpSection, Renderer, TerminalView, create_palette};
 use term::terminal::Terminal;
@@ -253,6 +253,7 @@ impl LayoutNode {
 struct Pane {
     terminal: Terminal,
     view: TerminalView,
+    scale: usize,
 }
 
 /// Custom events for the application.
@@ -391,6 +392,39 @@ impl App {
         self.panes.get_mut(&self.focused_pane)
     }
 
+    fn zoom_focused(&mut self, delta: isize) {
+        let Some(pane) = self.focused_pane_mut() else {
+            return;
+        };
+
+        let new_scale = (pane.scale as isize + delta).clamp(1, 8) as usize;
+        if new_scale == pane.scale {
+            return;
+        }
+
+        pane.scale = new_scale;
+        self.layout_dirty = true;
+        self.update_cursor();
+        self.request_redraw();
+    }
+
+    fn zoom_reset_focused(&mut self) {
+        let new_scale = self.config.font.scale.clamp(1, 8);
+
+        let Some(pane) = self.focused_pane_mut() else {
+            return;
+        };
+
+        if pane.scale == new_scale {
+            return;
+        }
+
+        pane.scale = new_scale;
+        self.layout_dirty = true;
+        self.update_cursor();
+        self.request_redraw();
+    }
+
     fn pane_rects(
         &self,
         buffer_width: usize,
@@ -423,10 +457,15 @@ impl App {
         if !self.panes.is_empty() {
             return;
         }
-        self.spawn_pane(1);
+        self.spawn_pane(1, self.config.font.scale);
     }
 
-    fn spawn_pane(&mut self, id: PaneId) {
+    fn cell_size_for_scale(scale: usize) -> (usize, usize) {
+        let scale = scale.clamp(1, 8);
+        (8 * scale, 8 * scale)
+    }
+
+    fn spawn_pane(&mut self, id: PaneId, scale: usize) {
         let (pty, reader) = match term::pty::spawn_shell() {
             Ok(result) => result,
             Err(e) => {
@@ -449,6 +488,7 @@ impl App {
             Pane {
                 terminal,
                 view: TerminalView::new(),
+                scale: scale.clamp(1, 8),
             },
         );
     }
@@ -461,7 +501,13 @@ impl App {
 
         let new_id = self.next_pane_id;
         self.next_pane_id += 1;
-        self.spawn_pane(new_id);
+        let focused_scale = self
+            .panes
+            .get(&focused)
+            .map(|p| p.scale)
+            .unwrap_or(self.config.font.scale);
+
+        self.spawn_pane(new_id, focused_scale);
 
         let replacement = LayoutNode::Split {
             dir,
@@ -678,8 +724,9 @@ impl App {
 
         for (id, rect) in rects {
             if let Some(pane) = self.panes.get(&id) {
+                let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
                 pane.terminal
-                    .resize(rect.w as u32, rect.h as u32, CELL_W, CELL_H);
+                    .resize(rect.w as u32, rect.h as u32, cell_w, cell_h);
             }
         }
 
@@ -728,7 +775,8 @@ impl App {
                 continue;
             };
 
-            if rect.w < CELL_W || rect.h < CELL_H {
+            let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
+            if rect.w < cell_w || rect.h < cell_h {
                 continue;
             }
 
@@ -740,6 +788,9 @@ impl App {
                 rect.y,
                 rect.w,
                 rect.h,
+                cell_w,
+                cell_h,
+                pane.scale,
                 &pane.terminal,
                 &palette,
                 &mut pane.view,
@@ -788,7 +839,7 @@ impl App {
                 bindings.sort_by(|a, b| a.0.cmp(&b.0));
             }
 
-            let order = ["General", "Panes", "Scrollback", "Search", "Help"];
+            let order = ["General", "Panes", "Zoom", "Scrollback", "Search", "Help"];
             let mut sections: Vec<HelpSection> = Vec::new();
 
             for category in order {
@@ -818,6 +869,7 @@ impl App {
                 &sections,
                 self.help_scroll,
                 self.config.colors.accent,
+                self.config.font.scale,
             );
             self.help_scroll = scroll;
             self.help_max_scroll = max_scroll;
@@ -1175,6 +1227,16 @@ impl App {
                 self.request_redraw();
             }
 
+            Action::ZoomIn => {
+                self.zoom_focused(1);
+            }
+            Action::ZoomOut => {
+                self.zoom_focused(-1);
+            }
+            Action::ZoomReset => {
+                self.zoom_reset_focused();
+            }
+
             Action::Copy => self.handle_copy(),
             Action::Paste => self.handle_paste(),
 
@@ -1305,7 +1367,9 @@ impl App {
 
         match state {
             ElementState::Pressed => {
-                if let Some((row, col)) = pane.view.window_to_cell(local.x, local.y) {
+                let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
+                if let Some((row, col)) = pane.view.window_to_cell(local.x, local.y, cell_w, cell_h)
+                {
                     if let Some(url) = pane.view.url_at(row, col) {
                         if let Err(e) = self.url_opener.open(&url) {
                             eprintln!("Failed to open URL: {e}");
@@ -1346,13 +1410,15 @@ impl App {
 
         let local = Self::localize_pos(pane_rect, position);
 
+        let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
+
         if self.input.mouse_selecting && pane_id == self.focused_pane {
-            if let Some((row, col)) = pane.view.window_to_cell(local.x, local.y) {
+            if let Some((row, col)) = pane.view.window_to_cell(local.x, local.y, cell_w, cell_h) {
                 pane.view.update_selection(row, col);
                 self.request_redraw();
             }
         } else {
-            if let Some((row, col)) = pane.view.window_to_cell(local.x, local.y) {
+            if let Some((row, col)) = pane.view.window_to_cell(local.x, local.y, cell_w, cell_h) {
                 if pane.view.update_url_hover(row, col) {
                     self.request_redraw();
                 }
@@ -1400,7 +1466,15 @@ impl App {
             MouseScrollDelta::LineDelta(_, y) => {
                 (y * self.config.terminal.scroll_speed).round() as isize
             }
-            MouseScrollDelta::PixelDelta(pos) => (pos.y / CELL_H as f64).round() as isize,
+            MouseScrollDelta::PixelDelta(pos) => {
+                // Use the focused pane's cell height as a reasonable heuristic.
+                let cell_h = self
+                    .panes
+                    .get(&self.focused_pane)
+                    .map(|p| Self::cell_size_for_scale(p.scale).1)
+                    .unwrap_or(CELL_H);
+                (pos.y / cell_h as f64).round() as isize
+            }
         };
 
         if lines == 0 {

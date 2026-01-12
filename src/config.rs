@@ -77,6 +77,27 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Applies any missing defaults and clamps values to sane ranges.
+    ///
+    /// Note: `serde(default)` already fills in most missing fields, but
+    /// collection-like configs (like `keybinds`) need explicit merging to pick
+    /// up newly added defaults without overwriting user customizations.
+    pub fn apply_defaults(&mut self) {
+        self.keybinds.apply_defaults();
+
+        // Keep rendering/input assumptions intact.
+        self.font.scale = self.font.scale.clamp(1, 8);
+
+        self.terminal.rows = self.terminal.rows.max(1);
+        self.terminal.cols = self.terminal.cols.max(1);
+        self.terminal.scrollback_lines = self.terminal.scrollback_lines.max(1);
+        self.terminal.tab_width = self.terminal.tab_width.max(1);
+
+        if !self.terminal.scroll_speed.is_finite() || self.terminal.scroll_speed <= 0.0 {
+            self.terminal.scroll_speed = SCROLL_SPEED_MULTIPLIER;
+        }
+    }
+
     /// Loads configuration from the default path.
     /// If config file doesn't exist, writes defaults and returns them.
     pub fn load() -> Self {
@@ -86,7 +107,8 @@ impl Config {
 
         // Try to read existing config
         if let Ok(contents) = fs::read_to_string(&path) {
-            if let Ok(config) = toml::from_str(&contents) {
+            if let Ok(mut config) = toml::from_str::<Config>(&contents) {
+                config.apply_defaults();
                 return config;
             }
             // Config exists but is invalid - don't overwrite, just use defaults
@@ -244,6 +266,13 @@ pub enum Action {
     /// Toggle help popover.
     ToggleHelp,
 
+    /// Increase font scale in the focused pane.
+    ZoomIn,
+    /// Decrease font scale in the focused pane.
+    ZoomOut,
+    /// Reset font scale in the focused pane.
+    ZoomReset,
+
     /// Scroll up by one page.
     ScrollPageUp,
     /// Scroll down by one page.
@@ -306,6 +335,8 @@ impl Action {
 
             Action::ToggleHelp => "Help",
 
+            Action::ZoomIn | Action::ZoomOut | Action::ZoomReset => "Zoom",
+
             Action::ScrollPageUp
             | Action::ScrollPageDown
             | Action::ScrollLineUp
@@ -358,6 +389,10 @@ impl Action {
             Action::SearchConfirm => "Search confirm",
 
             Action::ToggleHelp => "Toggle help",
+
+            Action::ZoomIn => "Zoom in",
+            Action::ZoomOut => "Zoom out",
+            Action::ZoomReset => "Zoom reset",
         }
     }
 }
@@ -441,6 +476,11 @@ impl Default for KeybindConfig {
         bindings.insert("ctrl+shift+w".to_string(), Action::ClosePane);
         bindings.insert("ctrl+shift+/".to_string(), Action::ToggleHelp);
 
+        // Zoom (pane-local)
+        bindings.insert("ctrl+alt+=".to_string(), Action::ZoomIn);
+        bindings.insert("ctrl+alt+-".to_string(), Action::ZoomOut);
+        bindings.insert("ctrl+alt+0".to_string(), Action::ZoomReset);
+
         bindings.insert("shift+pageup".to_string(), Action::ScrollPageUp);
         bindings.insert("shift+pagedown".to_string(), Action::ScrollPageDown);
         bindings.insert("shift+up".to_string(), Action::ScrollLineUp);
@@ -464,6 +504,17 @@ impl Default for KeybindConfig {
 }
 
 impl KeybindConfig {
+    /// Merges any missing default bindings into this config.
+    ///
+    /// This keeps user-overrides intact while ensuring new actions show up
+    /// in existing `config.toml` files.
+    pub fn apply_defaults(&mut self) {
+        let defaults = KeybindConfig::default();
+        for (key, action) in defaults.bindings {
+            self.bindings.entry(key).or_insert(action);
+        }
+    }
+
     /// Finds the action for a given key and modifiers.
     pub fn get_action(&self, key: &str, ctrl: bool, shift: bool, alt: bool) -> Option<Action> {
         for (bind_str, action) in &self.bindings {
