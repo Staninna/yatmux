@@ -82,6 +82,9 @@ pub fn spawn_shell() -> Result<(Pty, Box<dyn Read + Send>)> {
 
     let mut cmd = CommandBuilder::new(default_shell());
     cmd.env("TERM", "xterm-256color");
+    cmd.env("TERM_PROGRAM", "yatmux");
+    cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+    cmd.env("YATMUX", "1");
 
     let child = pair.slave.spawn_command(cmd).context("spawn shell")?;
 

@@ -3251,27 +3251,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "term"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arboard",
- "dirs",
- "font8x8",
- "open",
- "portable-pty",
- "regex",
- "serde",
- "softbuffer",
- "tattoy-wezterm-cell",
- "tattoy-wezterm-surface",
- "tattoy-wezterm-term",
- "toml",
- "vt100",
- "winit",
-]
-
-[[package]]
 name = "terminfo"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4337,6 +4316,27 @@ name = "y4m"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a5a4b21e1a62b67a2970e6831bc091d7b87e119e7f9791aef9702e3bef04448"
+
+[[package]]
+name = "yatmux"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "dirs",
+ "font8x8",
+ "open",
+ "portable-pty",
+ "regex",
+ "serde",
+ "softbuffer",
+ "tattoy-wezterm-cell",
+ "tattoy-wezterm-surface",
+ "tattoy-wezterm-term",
+ "toml",
+ "vt100",
+ "winit",
+]
 
 [[package]]
 name = "yoke"
