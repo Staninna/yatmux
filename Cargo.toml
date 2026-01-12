@@ -19,3 +19,6 @@ tattoy-wezterm-surface = "0.1.0-fork.2"
 tattoy-wezterm-term = "0.1.0-fork.5"
 vt100 = "0.15"
 winit = "0.30"
+
+[patch.crates-io]
+tattoy-wezterm-term = { path = "vendor/tattoy-wezterm-term" }
