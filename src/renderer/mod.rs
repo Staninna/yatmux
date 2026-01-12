@@ -424,6 +424,13 @@ impl TerminalView {
     }
 }
 
+/// A categorized list of key bindings for the help overlay.
+#[derive(Clone, Debug)]
+pub struct HelpSection {
+    pub title: String,
+    pub bindings: Vec<(String, String)>,
+}
+
 /// Pixel-paints a `RenderFrame` to the window surface.
 ///
 /// All interactive state lives in `TerminalView`; this type is intentionally
@@ -441,6 +448,45 @@ impl Renderer {
         Renderer
     }
 
+    /// Paint a terminal into a region of an existing backbuffer.
+    pub fn paint_terminal_region(
+        &self,
+        backbuffer: &mut [u32],
+        buffer_width: usize,
+        buffer_height: usize,
+        origin_x: usize,
+        origin_y: usize,
+        region_w: usize,
+        region_h: usize,
+        terminal: &Terminal,
+        palette: &Arc<[u32; 256]>,
+        view: &mut TerminalView,
+    ) -> Result<()> {
+        if region_w < CELL_W || region_h < CELL_H {
+            return Ok(());
+        }
+
+        let rows = region_h / CELL_H;
+        let cols = region_w / CELL_W;
+        view.set_dimensions(rows, cols);
+
+        let frame = view.build_frame(terminal, rows, cols)?;
+        self.paint_frame(
+            backbuffer,
+            buffer_width,
+            buffer_height,
+            origin_x,
+            origin_y,
+            region_w,
+            region_h,
+            &frame,
+            palette,
+            view,
+        );
+
+        Ok(())
+    }
+
     pub fn render(
         &self,
         surface: &mut Surface<winit::event_loop::OwnedDisplayHandle, winit::window::Window>,
@@ -456,19 +502,18 @@ impl Renderer {
         let buffer_height = buffer.height().get() as usize;
         buffer.fill(DEFAULT_BG_COLOR);
 
-        let rows = buffer_height / CELL_H;
-        let cols = buffer_width / CELL_W;
-        view.set_dimensions(rows, cols);
-
-        let frame = view.build_frame(terminal, rows, cols)?;
-        self.paint_frame(
+        self.paint_terminal_region(
             &mut buffer,
             buffer_width,
             buffer_height,
-            &frame,
+            0,
+            0,
+            buffer_width,
+            buffer_height,
+            terminal,
             palette,
             view,
-        );
+        )?;
 
         buffer
             .present()
@@ -477,11 +522,205 @@ impl Renderer {
         Ok(())
     }
 
+    pub fn paint_help_overlay(
+        &self,
+        backbuffer: &mut [u32],
+        buffer_width: usize,
+        buffer_height: usize,
+        title: &str,
+        sections: &[HelpSection],
+        scroll_offset: usize,
+    ) -> (usize, usize) {
+        if buffer_width < CELL_W * 10 || buffer_height < CELL_H * 5 {
+            return (0, 0);
+        }
+
+        let padding_cells_x = 2usize;
+        let padding_cells_y = 1usize;
+
+        let fixed_lines = vec![title.to_string(), String::new()];
+        let mut content_lines: Vec<String> = Vec::new();
+
+        let mut max_line_len = title.len();
+        for (section_idx, section) in sections.iter().enumerate() {
+            if section_idx > 0 {
+                content_lines.push(String::new());
+            }
+
+            max_line_len = max_line_len.max(section.title.len());
+            content_lines.push(section.title.clone());
+
+            // Render like: "  ctrl+shift+/  Toggle help"
+            for (key, action) in &section.bindings {
+                let line = format!("  {:<16} {}", key, action);
+                max_line_len = max_line_len.max(line.len());
+                content_lines.push(line);
+            }
+        }
+
+        let box_cols = (max_line_len + padding_cells_x * 2).min(buffer_width / CELL_W);
+        let total_rows = fixed_lines.len() + content_lines.len() + padding_cells_y * 2;
+        let box_rows = total_rows.min(buffer_height / CELL_H);
+
+        let box_w = box_cols * CELL_W;
+        let box_h = box_rows * CELL_H;
+        let origin_x = buffer_width.saturating_sub(box_w) / 2;
+        let origin_y = buffer_height.saturating_sub(box_h) / 2;
+
+        // Background
+        let bg = 0x1A1A1A;
+        let border = 0x66AAFF;
+
+        for y in origin_y..(origin_y + box_h).min(buffer_height) {
+            let row = y * buffer_width;
+            for x in origin_x..(origin_x + box_w).min(buffer_width) {
+                backbuffer[row + x] = bg;
+            }
+        }
+
+        // Border
+        for x in origin_x..(origin_x + box_w).min(buffer_width) {
+            backbuffer[origin_y * buffer_width + x] = border;
+            let yb = (origin_y + box_h - 1).min(buffer_height - 1);
+            backbuffer[yb * buffer_width + x] = border;
+        }
+        for y in origin_y..(origin_y + box_h).min(buffer_height) {
+            backbuffer[y * buffer_width + origin_x] = border;
+            let xb = (origin_x + box_w - 1).min(buffer_width - 1);
+            backbuffer[y * buffer_width + xb] = border;
+        }
+
+        let content_rows = box_rows
+            .saturating_sub(padding_cells_y * 2)
+            .saturating_sub(fixed_lines.len());
+        let max_scroll = content_lines.len().saturating_sub(content_rows);
+        let scroll = scroll_offset.min(max_scroll);
+
+        // Scrollbar (only when there is overflow)
+        if max_scroll > 0 && content_rows > 0 {
+            let track_y0 = origin_y + padding_cells_y * CELL_H + fixed_lines.len() * CELL_H;
+            let track_y1 = origin_y + box_h - padding_cells_y * CELL_H;
+            let track_y0 = track_y0.min(buffer_height.saturating_sub(1));
+            let track_y1 = track_y1.min(buffer_height);
+
+            if track_y1 > track_y0 {
+                let track_h = track_y1 - track_y0;
+                let total = content_lines.len().max(1);
+                let visible = content_rows.min(total);
+
+                let mut thumb_h = (track_h * visible) / total;
+                thumb_h = thumb_h.max(CELL_H).min(track_h);
+
+                let travel = track_h.saturating_sub(thumb_h);
+                let thumb_y0 = if max_scroll == 0 {
+                    track_y0
+                } else {
+                    track_y0 + (travel * scroll) / max_scroll
+                };
+                let thumb_y1 = (thumb_y0 + thumb_h).min(track_y1);
+
+                // Draw inside the right padding area.
+                let bar_w = 2usize;
+                let bar_x1 = (origin_x + box_w).min(buffer_width).saturating_sub(2);
+                let bar_x0 = bar_x1.saturating_sub(bar_w);
+
+                let track_color = 0x333333;
+                let thumb_color = 0x66AAFF;
+
+                for y in track_y0..track_y1 {
+                    let row = y * buffer_width;
+                    for x in bar_x0..bar_x1 {
+                        backbuffer[row + x] = track_color;
+                    }
+                }
+
+                for y in thumb_y0..thumb_y1 {
+                    let row = y * buffer_width;
+                    for x in bar_x0..bar_x1 {
+                        backbuffer[row + x] = thumb_color;
+                    }
+                }
+            }
+        }
+
+        // Text
+        let text_color = 0xFFFFFF;
+        let mut y = origin_y + padding_cells_y * CELL_H;
+
+        for (idx, line) in fixed_lines.iter().enumerate() {
+            if idx + padding_cells_y >= box_rows {
+                break;
+            }
+            let mut x = origin_x + padding_cells_x * CELL_W;
+            for ch in line.chars() {
+                if x + CELL_W > origin_x + box_w - padding_cells_x * CELL_W {
+                    break;
+                }
+                let glyph = font::get_glyph(ch);
+                self.draw_glyph(
+                    backbuffer,
+                    buffer_width,
+                    buffer_height,
+                    origin_x,
+                    origin_y,
+                    box_w,
+                    box_h,
+                    x,
+                    y,
+                    glyph,
+                    text_color,
+                );
+                x += CELL_W;
+            }
+            y += CELL_H;
+        }
+
+        for (idx, line) in content_lines
+            .iter()
+            .skip(scroll)
+            .take(content_rows)
+            .enumerate()
+        {
+            let overall_idx = idx + fixed_lines.len();
+            if overall_idx + padding_cells_y >= box_rows {
+                break;
+            }
+            let mut x = origin_x + padding_cells_x * CELL_W;
+            for ch in line.chars() {
+                if x + CELL_W > origin_x + box_w - padding_cells_x * CELL_W {
+                    break;
+                }
+                let glyph = font::get_glyph(ch);
+                self.draw_glyph(
+                    backbuffer,
+                    buffer_width,
+                    buffer_height,
+                    origin_x,
+                    origin_y,
+                    box_w,
+                    box_h,
+                    x,
+                    y,
+                    glyph,
+                    text_color,
+                );
+                x += CELL_W;
+            }
+            y += CELL_H;
+        }
+
+        (scroll, max_scroll)
+    }
+
     fn paint_frame(
         &self,
         buffer: &mut [u32],
         buffer_width: usize,
         buffer_height: usize,
+        origin_x: usize,
+        origin_y: usize,
+        region_w: usize,
+        region_h: usize,
         frame: &RenderFrame,
         palette: &[u32; 256],
         view: &TerminalView,
@@ -506,6 +745,10 @@ impl Renderer {
                     buffer,
                     buffer_width,
                     buffer_height,
+                    origin_x,
+                    origin_y,
+                    region_w,
+                    region_h,
                     row_idx,
                     col,
                     ch,
@@ -524,7 +767,16 @@ impl Renderer {
         }
 
         if view.search.is_active() {
-            self.draw_search_bar(buffer, buffer_width, buffer_height, view);
+            self.draw_search_bar(
+                buffer,
+                buffer_width,
+                buffer_height,
+                origin_x,
+                origin_y,
+                region_w,
+                region_h,
+                view,
+            );
         }
     }
 
@@ -533,6 +785,10 @@ impl Renderer {
         backbuffer: &mut [u32],
         width: usize,
         height: usize,
+        origin_x: usize,
+        origin_y: usize,
+        region_w: usize,
+        region_h: usize,
         row: usize,
         col: usize,
         ch: char,
@@ -577,11 +833,18 @@ impl Renderer {
 
         let fg = if is_url { 0x6699FF } else { fg };
 
-        let x0 = col * CELL_W;
-        let y0 = row * CELL_H;
+        let x0 = origin_x + col * CELL_W;
+        let y0 = origin_y + row * CELL_H;
 
-        for y in y0..(y0 + CELL_H).min(height) {
-            for x in x0..(x0 + CELL_W).min(width) {
+        let clip_right = (origin_x + region_w).min(width);
+        let clip_bottom = (origin_y + region_h).min(height);
+
+        if x0 >= clip_right || y0 >= clip_bottom {
+            return;
+        }
+
+        for y in y0..(y0 + CELL_H).min(clip_bottom) {
+            for x in x0..(x0 + CELL_W).min(clip_right) {
                 backbuffer[y * width + x] = fill_color;
             }
         }
@@ -593,6 +856,10 @@ impl Renderer {
                     backbuffer,
                     width,
                     height,
+                    origin_x,
+                    origin_y,
+                    region_w,
+                    region_h,
                     x0,
                     y0,
                     tab_indicator_glyph(),
@@ -603,12 +870,14 @@ impl Renderer {
         }
 
         let glyph = font::get_glyph(ch);
-        self.draw_glyph(backbuffer, width, height, x0, y0, glyph, fg);
+        self.draw_glyph(
+            backbuffer, width, height, origin_x, origin_y, region_w, region_h, x0, y0, glyph, fg,
+        );
 
         if is_url_hovered {
             let underline_y = y0 + CELL_H - 2;
-            if underline_y < height {
-                for x in x0..(x0 + CELL_W).min(width) {
+            if underline_y < clip_bottom {
+                for x in x0..(x0 + CELL_W).min(clip_right) {
                     backbuffer[underline_y * width + x] = fg;
                 }
             }
@@ -620,11 +889,18 @@ impl Renderer {
         backbuffer: &mut [u32],
         width: usize,
         height: usize,
+        origin_x: usize,
+        origin_y: usize,
+        region_w: usize,
+        region_h: usize,
         x0: usize,
         y0: usize,
         glyph: [u8; 8],
         color: u32,
     ) {
+        let clip_right = (origin_x + region_w).min(width);
+        let clip_bottom = (origin_y + region_h).min(height);
+
         for gy in 0..GLYPH_H {
             let bits = glyph[gy];
             for gx in 0..GLYPH_W {
@@ -637,7 +913,7 @@ impl Renderer {
                     for sx in 0..FONT_SCALE {
                         let x = x0 + gx * FONT_SCALE + sx;
                         let y = y0 + gy * FONT_SCALE + sy;
-                        if x < width && y < height {
+                        if x < clip_right && y < clip_bottom {
                             backbuffer[y * width + x] = color;
                         }
                     }
@@ -651,41 +927,57 @@ impl Renderer {
         buffer: &mut [u32],
         width: usize,
         height: usize,
+        origin_x: usize,
+        origin_y: usize,
+        region_w: usize,
+        region_h: usize,
         view: &TerminalView,
     ) {
         let bar_height = CELL_H;
-        let bar_y = height.saturating_sub(bar_height);
+        let bar_y = origin_y + region_h.saturating_sub(bar_height);
+        let clip_right = (origin_x + region_w).min(width);
+        let clip_bottom = (origin_y + region_h).min(height);
 
         let bar_bg = 0x333333;
         let text_color = 0xFFFFFF;
         let match_info_color = 0xAAAAAA;
 
-        for y in bar_y..height {
-            for x in 0..width {
-                buffer[y * width + x] = bar_bg;
+        for y in bar_y.min(clip_bottom)..clip_bottom {
+            let row = y * width;
+            for x in origin_x.min(width)..clip_right {
+                buffer[row + x] = bar_bg;
             }
         }
 
         let prefix = "Find: ";
-        let mut x_pos = CELL_W / 2;
+        let mut x_pos = origin_x + CELL_W / 2;
         for ch in prefix.chars() {
+            if x_pos + CELL_W > clip_right {
+                break;
+            }
             let glyph = font::get_glyph(ch);
-            self.draw_glyph(buffer, width, height, x_pos, bar_y, glyph, text_color);
+            self.draw_glyph(
+                buffer, width, height, origin_x, origin_y, region_w, region_h, x_pos, bar_y, glyph,
+                text_color,
+            );
             x_pos += CELL_W;
         }
 
         for ch in view.search.query().chars() {
-            if x_pos + CELL_W > width - 100 {
+            if x_pos + CELL_W > clip_right.saturating_sub(100) {
                 break;
             }
             let glyph = font::get_glyph(ch);
-            self.draw_glyph(buffer, width, height, x_pos, bar_y, glyph, text_color);
+            self.draw_glyph(
+                buffer, width, height, origin_x, origin_y, region_w, region_h, x_pos, bar_y, glyph,
+                text_color,
+            );
             x_pos += CELL_W;
         }
 
         let cursor_x = x_pos;
-        for y in bar_y..(bar_y + CELL_H).min(height) {
-            if cursor_x < width {
+        for y in bar_y.min(clip_bottom)..(bar_y + CELL_H).min(clip_bottom) {
+            if cursor_x < clip_right {
                 buffer[y * width + cursor_x] = text_color;
             }
         }
@@ -707,12 +999,27 @@ impl Renderer {
         };
 
         let info_width = match_info.len() * CELL_W;
-        let info_x = width.saturating_sub(info_width + CELL_W);
+        let info_x = clip_right.saturating_sub(info_width + CELL_W);
 
         let mut x_pos = info_x;
         for ch in match_info.chars() {
+            if x_pos + CELL_W > clip_right {
+                break;
+            }
             let glyph = font::get_glyph(ch);
-            self.draw_glyph(buffer, width, height, x_pos, bar_y, glyph, match_info_color);
+            self.draw_glyph(
+                buffer,
+                width,
+                height,
+                origin_x,
+                origin_y,
+                region_w,
+                region_h,
+                x_pos,
+                bar_y,
+                glyph,
+                match_info_color,
+            );
             x_pos += CELL_W;
         }
     }

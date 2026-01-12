@@ -213,6 +213,33 @@ pub enum Action {
     Copy,
     /// Paste from clipboard.
     Paste,
+
+    /// Split the focused pane vertically.
+    SplitVertical,
+    /// Split the focused pane horizontally.
+    SplitHorizontal,
+    /// Move focus to the pane on the left.
+    FocusLeft,
+    /// Move focus to the pane on the right.
+    FocusRight,
+    /// Move focus to the pane above.
+    FocusUp,
+    /// Move focus to the pane below.
+    FocusDown,
+    /// Resize split to give more space left.
+    ResizeLeft,
+    /// Resize split to give more space right.
+    ResizeRight,
+    /// Resize split to give more space up.
+    ResizeUp,
+    /// Resize split to give more space down.
+    ResizeDown,
+    /// Close the focused pane.
+    ClosePane,
+
+    /// Toggle help popover.
+    ToggleHelp,
+
     /// Scroll up by one page.
     ScrollPageUp,
     /// Scroll down by one page.
@@ -229,6 +256,7 @@ pub enum Action {
     ClearScrollback,
     /// Reset the terminal.
     Reset,
+
     /// Open search mode.
     SearchFind,
     /// Close search mode.
@@ -254,6 +282,79 @@ impl Action {
                 | Action::SearchToggleCase
                 | Action::SearchConfirm
         )
+    }
+
+    pub fn category(&self) -> &'static str {
+        match self {
+            Action::Copy | Action::Paste => "General",
+
+            Action::SplitVertical
+            | Action::SplitHorizontal
+            | Action::FocusLeft
+            | Action::FocusRight
+            | Action::FocusUp
+            | Action::FocusDown
+            | Action::ResizeLeft
+            | Action::ResizeRight
+            | Action::ResizeUp
+            | Action::ResizeDown
+            | Action::ClosePane => "Panes",
+
+            Action::ToggleHelp => "Help",
+
+            Action::ScrollPageUp
+            | Action::ScrollPageDown
+            | Action::ScrollLineUp
+            | Action::ScrollLineDown
+            | Action::ScrollToTop
+            | Action::ScrollToBottom
+            | Action::ClearScrollback
+            | Action::Reset => "Scrollback",
+
+            Action::SearchFind
+            | Action::SearchClose
+            | Action::SearchNext
+            | Action::SearchPrev
+            | Action::SearchToggleCase
+            | Action::SearchConfirm => "Search",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Action::Copy => "Copy",
+            Action::Paste => "Paste",
+
+            Action::SplitVertical => "Split vertical",
+            Action::SplitHorizontal => "Split horizontal",
+            Action::ClosePane => "Close pane",
+            Action::FocusLeft => "Focus left pane",
+            Action::FocusRight => "Focus right pane",
+            Action::FocusUp => "Focus upper pane",
+            Action::FocusDown => "Focus lower pane",
+            Action::ResizeLeft => "Resize: give left",
+            Action::ResizeRight => "Resize: give right",
+            Action::ResizeUp => "Resize: give up",
+            Action::ResizeDown => "Resize: give down",
+
+            Action::ScrollPageUp => "Scroll page up",
+            Action::ScrollPageDown => "Scroll page down",
+            Action::ScrollLineUp => "Scroll line up",
+            Action::ScrollLineDown => "Scroll line down",
+            Action::ScrollToTop => "Scroll to top",
+            Action::ScrollToBottom => "Scroll to bottom",
+            Action::ClearScrollback => "Clear scrollback",
+            Action::Reset => "Reset",
+
+            Action::SearchFind => "Search",
+            Action::SearchClose => "Close search",
+            Action::SearchNext => "Search next",
+            Action::SearchPrev => "Search prev",
+            Action::SearchToggleCase => "Toggle search case",
+            Action::SearchConfirm => "Search confirm",
+
+            Action::ToggleHelp => "Toggle help",
+        }
     }
 }
 
@@ -321,6 +422,21 @@ impl Default for KeybindConfig {
         bindings.insert("ctrl+shift+v".to_string(), Action::Paste);
         bindings.insert("ctrl+v".to_string(), Action::Paste);
         bindings.insert("shift+insert".to_string(), Action::Paste);
+
+        // Pane management
+        bindings.insert("ctrl+shift+\\".to_string(), Action::SplitVertical);
+        bindings.insert("ctrl+shift+-".to_string(), Action::SplitHorizontal);
+        bindings.insert("alt+left".to_string(), Action::FocusLeft);
+        bindings.insert("alt+right".to_string(), Action::FocusRight);
+        bindings.insert("alt+up".to_string(), Action::FocusUp);
+        bindings.insert("alt+down".to_string(), Action::FocusDown);
+        bindings.insert("ctrl+shift+left".to_string(), Action::ResizeLeft);
+        bindings.insert("ctrl+shift+right".to_string(), Action::ResizeRight);
+        bindings.insert("ctrl+shift+up".to_string(), Action::ResizeUp);
+        bindings.insert("ctrl+shift+down".to_string(), Action::ResizeDown);
+        bindings.insert("ctrl+shift+w".to_string(), Action::ClosePane);
+        bindings.insert("ctrl+shift+/".to_string(), Action::ToggleHelp);
+
         bindings.insert("shift+pageup".to_string(), Action::ScrollPageUp);
         bindings.insert("shift+pagedown".to_string(), Action::ScrollPageDown);
         bindings.insert("shift+up".to_string(), Action::ScrollLineUp);
