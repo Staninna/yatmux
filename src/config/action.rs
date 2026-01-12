@@ -111,6 +111,19 @@ pub enum Action {
     SearchToggleRegex,
     /// Confirm search / go to current match.
     SearchConfirm,
+
+    /// Copy the last command's output to clipboard (requires shell integration).
+    CopyLastOutput,
+    /// Jump to the previous prompt in scrollback (requires shell integration).
+    JumpToPrevPrompt,
+    /// Jump to the next prompt in scrollback (requires shell integration).
+    JumpToNextPrompt,
+
+    /// Toggle shadow prompt for the focused pane.
+    ToggleShadowPrompt,
+
+    /// Reload `config.toml` from disk.
+    ReloadConfig,
 }
 
 impl Action {
@@ -180,6 +193,13 @@ impl Action {
             | Action::SearchToggleCase
             | Action::SearchToggleRegex
             | Action::SearchConfirm => "Search",
+
+            Action::CopyLastOutput
+            | Action::JumpToPrevPrompt
+            | Action::JumpToNextPrompt
+            | Action::ToggleShadowPrompt => "Shell Integration",
+
+            Action::ReloadConfig => "Config",
         }
     }
 
@@ -239,6 +259,12 @@ impl Action {
             Action::ZoomIn => "Zoom in",
             Action::ZoomOut => "Zoom out",
             Action::ZoomReset => "Zoom reset",
+
+            Action::CopyLastOutput => "Copy last output",
+            Action::JumpToPrevPrompt => "Previous prompt",
+            Action::JumpToNextPrompt => "Next prompt",
+            Action::ToggleShadowPrompt => "Toggle shadow prompt",
+            Action::ReloadConfig => "Reload config",
         }
     }
 }

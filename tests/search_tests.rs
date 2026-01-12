@@ -9,7 +9,7 @@
 mod common;
 
 use common::make_row;
-use term::core::search::SearchState;
+use yatmux::core::search::SearchState;
 
 #[test]
 fn test_search_state_new() {

@@ -3,11 +3,11 @@
 //! These tests exercise the full terminal flow using mock implementations.
 
 use std::sync::Arc;
-use term::clipboard::ClipboardProvider;
-use term::clipboard::mock::MockClipboard;
-use term::config::Config;
-use term::pty::mock::MockPty;
-use term::terminal::Terminal;
+use yatmux::clipboard::ClipboardProvider;
+use yatmux::clipboard::mock::MockClipboard;
+use yatmux::config::Config;
+use yatmux::pty::mock::MockPty;
+use yatmux::terminal::Terminal;
 
 /// Helper to create a test terminal with mock PTY.
 fn create_terminal() -> (Terminal, Arc<MockPty>) {

@@ -1,69 +1,9 @@
-//!
-//! Terminal state management built on a terminal-core dependency.
-//!
-//! We use `tattoy-wezterm-term` as the terminal model because it supports
-//! robust resize behavior (rewrapping logical lines instead of truncating
-//! and losing data when the viewport shrinks).
-
-use std::io::{self, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-
 use vt100::Color;
 
-use crate::constants::{DEFAULT_COLS, DEFAULT_ROWS, SCROLLBACK_CAPACITY};
 use crate::core::grid::RowSnapshot;
-use crate::pty::PtyWriter;
 
-use tattoy_wezterm_cell::color::ColorAttribute;
-use tattoy_wezterm_term::color::ColorPalette;
-use tattoy_wezterm_term::{Terminal as WezTerminal, TerminalConfiguration, TerminalSize};
-
-#[derive(Debug)]
-struct TermConfig {
-    scrollback: usize,
-}
-
-impl TerminalConfiguration for TermConfig {
-    fn scrollback_size(&self) -> usize {
-        self.scrollback
-    }
-
-    fn color_palette(&self) -> ColorPalette {
-        ColorPalette::default()
-    }
-}
-
-#[derive(Clone)]
-struct PtyWriteAdapter {
-    pty: Arc<dyn PtyWriter>,
-}
-
-impl Write for PtyWriteAdapter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.pty.write(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-fn color_attr_to_vt100(color: ColorAttribute) -> Color {
-    match color {
-        ColorAttribute::Default => Color::Default,
-        ColorAttribute::PaletteIndex(idx) => Color::Idx(idx),
-        ColorAttribute::TrueColorWithDefaultFallback(srgba) => {
-            let (r, g, b, _) = srgba.as_rgba_u8();
-            Color::Rgb(r, g, b)
-        }
-        ColorAttribute::TrueColorWithPaletteFallback(srgba, _fallback) => {
-            let (r, g, b, _) = srgba.as_rgba_u8();
-            Color::Rgb(r, g, b)
-        }
-    }
-}
+use super::Terminal;
+use super::adapters::color_attr_to_vt100;
 
 /// A complete snapshot of the terminal screen state.
 #[allow(dead_code)]
@@ -75,98 +15,21 @@ pub struct ScreenSnapshot {
     pub cursor_visible: bool,
 }
 
-/// Core terminal state, independent of rendering.
-///
-/// Internally uses a robust terminal model that reflows on resize.
-pub struct Terminal {
-    term: Mutex<WezTerminal>,
-    pty: Arc<dyn PtyWriter>,
-    size: Mutex<(u16, u16)>,
-    generation: AtomicU64,
-}
-
 impl Terminal {
-    /// Creates a new terminal with the given PTY.
-    pub fn new(pty: Arc<dyn PtyWriter>) -> Self {
-        Self::new_with_scrollback(pty, SCROLLBACK_CAPACITY)
-    }
-
-    pub fn new_with_scrollback(pty: Arc<dyn PtyWriter>, scrollback_lines: usize) -> Self {
-        let config: Arc<dyn TerminalConfiguration + Send + Sync> = Arc::new(TermConfig {
-            scrollback: scrollback_lines,
-        });
-
-        let size = TerminalSize {
-            rows: DEFAULT_ROWS as usize,
-            cols: DEFAULT_COLS as usize,
-            pixel_width: 0,
-            pixel_height: 0,
-            dpi: 0,
+    /// Returns the physical row index for the start of the visible area.
+    pub fn visible_start_row(&self) -> usize {
+        let term = match self.term.lock() {
+            Ok(t) => t,
+            Err(_) => return 0,
+        };
+        let (term_rows, _) = match self.size.lock() {
+            Ok(s) => *s,
+            Err(_) => return 0,
         };
 
-        let writer: Box<dyn Write + Send> = Box::new(PtyWriteAdapter { pty: pty.clone() });
-
-        let term = WezTerminal::new(size, config, "term", "0.1.0", writer);
-
-        Terminal {
-            term: Mutex::new(term),
-            pty,
-            size: Mutex::new((DEFAULT_ROWS, DEFAULT_COLS)),
-            generation: AtomicU64::new(1),
-        }
-    }
-
-    fn bump_generation(&self) {
-        self.generation.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn generation(&self) -> u64 {
-        self.generation.load(Ordering::Relaxed)
-    }
-
-    /// Writes bytes to the terminal PTY.
-    pub fn write(&self, bytes: &[u8]) {
-        self.pty.write(bytes);
-    }
-
-    /// Resizes the terminal to fit the given pixel dimensions.
-    pub fn resize(&self, width: u32, height: u32, cell_w: usize, cell_h: usize) {
-        let cols = (width as usize / cell_w).max(1) as u16;
-        let rows = (height as usize / cell_h).max(1) as u16;
-
-        {
-            let mut size_guard = self.size.lock().unwrap();
-            *size_guard = (rows, cols);
-        }
-
-        if let Ok(mut term) = self.term.lock() {
-            term.resize(TerminalSize {
-                rows: rows as usize,
-                cols: cols as usize,
-                pixel_width: width as usize,
-                pixel_height: height as usize,
-                dpi: 0,
-            });
-        }
-
-        self.pty.resize(rows, cols, width as u16, height as u16);
-        self.bump_generation();
-    }
-
-    /// Processes input bytes through the terminal model (simulates PTY output).
-    pub fn process(&self, bytes: &[u8]) {
-        if let Ok(mut term) = self.term.lock() {
-            term.advance_bytes(bytes);
-        }
-        self.bump_generation();
-    }
-
-    /// Clears scrollback history (keeps viewport content).
-    pub fn clear_scrollback(&self) {
-        if let Ok(mut term) = self.term.lock() {
-            term.erase_scrollback();
-        }
-        self.bump_generation();
+        let screen = term.screen();
+        let total_lines = screen.scrollback_rows();
+        total_lines.saturating_sub(term_rows as usize)
     }
 
     /// Captures the current screen state as a snapshot.
@@ -265,6 +128,7 @@ impl Terminal {
         screen.with_phys_lines(start..end, |lines| {
             for line in lines {
                 let mut cells = Vec::with_capacity(cols);
+                let mut hyperlinks = Vec::with_capacity(cols);
 
                 for col in 0..cols {
                     if let Some(cell) = line.get_cell(col) {
@@ -274,13 +138,18 @@ impl Terminal {
                         let fg = color_attr_to_vt100(attrs.foreground());
                         let bg = color_attr_to_vt100(attrs.background());
                         cells.push((ch, fg, bg));
+
+                        // Extract OSC 8 hyperlink if present
+                        let link = attrs.hyperlink().map(|h| h.uri().to_string());
+                        hyperlinks.push(link);
                     } else {
                         cells.push((' ', Color::Default, Color::Default));
+                        hyperlinks.push(None);
                     }
                 }
 
                 let tabs = vec![None; cols];
-                out.push(RowSnapshot::new(cells, tabs));
+                out.push(RowSnapshot::with_hyperlinks(cells, tabs, hyperlinks));
             }
         });
 
@@ -364,58 +233,5 @@ impl Terminal {
         } else {
             Some(trimmed)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::pty::mock::MockPty;
-
-    fn create_test_terminal() -> (Terminal, Arc<MockPty>) {
-        let mock_pty = Arc::new(MockPty::new());
-        let terminal = Terminal::new(mock_pty.clone());
-        (terminal, mock_pty)
-    }
-
-    #[test]
-    fn test_terminal_new() {
-        let (terminal, _mock_pty) = create_test_terminal();
-        let screen = terminal.screen_text();
-        assert!(!screen.is_empty());
-    }
-
-    #[test]
-    fn test_terminal_write_forwards_to_pty() {
-        let (terminal, mock_pty) = create_test_terminal();
-
-        terminal.write(b"hello");
-        terminal.write(b" world");
-
-        assert_eq!(mock_pty.written_string(), "hello world");
-    }
-
-    #[test]
-    fn test_terminal_resize_updates_pty() {
-        let (terminal, mock_pty) = create_test_terminal();
-        terminal.resize(800, 600, 10, 20);
-
-        let resizes = mock_pty.resizes.lock().unwrap();
-        assert_eq!(resizes.len(), 1);
-        assert_eq!(resizes[0], (30, 80, 800, 600));
-    }
-
-    #[test]
-    fn test_terminal_handles_output_and_resize_reflow() {
-        let (terminal, _mock_pty) = create_test_terminal();
-        terminal.process(b"hello world this is a long line");
-
-        // Shrink a lot, then grow again; content should still be present.
-        terminal.resize(80, 200, 10, 20); // 8 cols
-        terminal.resize(800, 200, 10, 20); // 80 cols
-
-        let screen = terminal.screen_text();
-        assert!(screen.contains("hello"));
-        assert!(screen.contains("world"));
     }
 }

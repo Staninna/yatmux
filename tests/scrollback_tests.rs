@@ -9,8 +9,8 @@
 mod common;
 
 use common::{make_row, make_rows};
-use term::core::grid::RowSnapshot;
-use term::core::scrollback::ScrollbackBuffer;
+use yatmux::core::grid::RowSnapshot;
+use yatmux::core::scrollback::ScrollbackBuffer;
 
 #[test]
 fn test_scrollback_buffer_new() {

@@ -1,6 +1,6 @@
 //! Action execution for the terminal application.
 
-use term::config::Action;
+use yatmux::config::Action;
 
 use crate::app::App;
 use crate::app::layout::SplitDir;
@@ -134,7 +134,98 @@ impl App {
             | Action::SearchToggleCase
             | Action::SearchToggleRegex
             | Action::SearchConfirm => {}
+
+            // Config
+            Action::ReloadConfig => self.reload_config(),
+
+            // Shell integration actions
+            Action::CopyLastOutput => self.copy_last_output(),
+            Action::JumpToPrevPrompt => self.jump_to_prompt(false),
+            Action::JumpToNextPrompt => self.jump_to_prompt(true),
+            Action::ToggleShadowPrompt => {
+                use yatmux::config::ShadowPromptMode;
+
+                if self.config.shell_integration.shadow_prompt == ShadowPromptMode::Off {
+                    self.show_toast("Shadow prompt is disabled in config");
+                    return;
+                }
+
+                let message = if let Some(pane) = self.focused_pane_mut() {
+                    pane.shadow_prompt_enabled = !pane.shadow_prompt_enabled;
+                    if !pane.shadow_prompt_enabled {
+                        pane.shadow_prompt.clear();
+                    }
+                    if pane.shadow_prompt_enabled {
+                        "Shadow prompt: ON"
+                    } else {
+                        "Shadow prompt: OFF"
+                    }
+                } else {
+                    return;
+                };
+
+                self.show_toast(message);
+            }
         }
+    }
+
+    /// Copies the last command's output to clipboard.
+    fn copy_last_output(&mut self) {
+        let output = self
+            .focused_pane_mut()
+            .and_then(|pane| pane.terminal.last_command_output());
+
+        if let Some(text) = output {
+            if self.clipboard.write(&text) {
+                self.show_toast("Copied command output");
+            }
+        } else {
+            self.show_toast("No command output found");
+        }
+    }
+
+    /// Jumps to the previous or next prompt in scrollback.
+    fn jump_to_prompt(&mut self, forward: bool) {
+        // First gather the data we need with an immutable borrow
+        let (prompts, visible_start, current_offset) = {
+            let Some(pane) = self.focused_pane_mut() else {
+                return;
+            };
+            let prompts = pane.terminal.prompt_positions();
+            let visible_start = pane.terminal.visible_start_row();
+            let current_offset = pane.view.scrollback_offset();
+            (prompts, visible_start, current_offset)
+        };
+
+        if prompts.is_empty() {
+            return;
+        }
+
+        // Current view is showing rows starting at: visible_start - current_offset
+        let current_top = visible_start.saturating_sub(current_offset);
+
+        // Find the target prompt
+        let target_prompt = if forward {
+            // Find the next prompt after current view
+            prompts.iter().find(|&&p| p > current_top).copied()
+        } else {
+            // Find the previous prompt before current view
+            prompts.iter().rev().find(|&&p| p < current_top).copied()
+        };
+
+        let Some(target) = target_prompt else {
+            return;
+        };
+
+        // Calculate the scroll offset to show this prompt at the top
+        // offset = visible_start - target
+        let new_offset = visible_start.saturating_sub(target);
+
+        // Get mutable reference and update
+        if let Some(pane) = self.focused_pane_mut() {
+            pane.view.scrollback_scroll_to(new_offset);
+        }
+        self.request_redraw();
     }
 
     /// Moves focus in the given direction within the active tab.
@@ -146,13 +237,15 @@ impl App {
 
         let tab_bar_height = self.tab_bar_height();
         let pane_height = (buffer_height as usize).saturating_sub(tab_bar_height);
+        let overlap_weight = self.config.interaction.focus_move_overlap_weight;
 
         let Some(tab) = self.active_tab_mut() else {
             return;
         };
 
         let (rects, _) = tab.pane_rects(buffer_width as usize, pane_height);
-        if tab.focus_move(dir, positive, &rects) {
+        if tab.focus_move(dir, positive, &rects, overlap_weight) {
+            self.refresh_active_tab_title_from_focused_pane();
             self.update_cursor();
             self.request_redraw();
         }
@@ -160,8 +253,9 @@ impl App {
 
     /// Resizes the focused pane in the given direction.
     fn resize_focused(&mut self, dir: SplitDir, negative: bool) {
+        let step = self.config.interaction.pane_resize_step;
         if let Some(tab) = self.active_tab_mut() {
-            if tab.resize_focused(dir, negative) {
+            if tab.resize_focused(dir, negative, step) {
                 self.layout_dirty = true;
                 self.request_redraw();
             }
@@ -180,6 +274,7 @@ impl App {
         }
 
         self.layout_dirty = true;
+        self.refresh_active_tab_title_from_focused_pane();
         self.update_cursor();
         self.request_redraw();
     }
@@ -189,6 +284,10 @@ impl App {
         let scale = self.config.font.scale;
         let scrollback = self.config.terminal.scrollback_lines;
         let min_size = self.config.pane.min_size();
+        let shadow_default = self
+            .config
+            .shell_integration
+            .shadow_prompt_enabled_by_default;
         let proxy = self.event_proxy.clone();
 
         // Get the current focused pane's rect
@@ -202,8 +301,10 @@ impl App {
                 proxy.as_ref(),
                 focused_rect,
                 min_size,
+                shadow_default,
             ) {
                 self.layout_dirty = true;
+                self.refresh_active_tab_title_from_focused_pane();
                 self.request_redraw();
             }
         }

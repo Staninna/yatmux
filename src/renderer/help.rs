@@ -18,6 +18,12 @@ pub fn paint_help_overlay(
     scroll_offset: usize,
     accent_color: u32,
     font_scale: usize,
+    shell_integration_detected: bool,
+    bg: u32,
+    text_color: u32,
+    footer_color: u32,
+    padding_cells_x: usize,
+    padding_cells_y: usize,
 ) -> (usize, usize) {
     let font_scale = font_scale.clamp(1, 8);
     let cell_w = 8 * font_scale;
@@ -27,13 +33,27 @@ pub fn paint_help_overlay(
         return (0, 0);
     }
 
-    let padding_cells_x = 2usize;
-    let padding_cells_y = 1usize;
+    let padding_cells_x = padding_cells_x;
+    let padding_cells_y = padding_cells_y;
 
     let fixed_lines = vec![title.to_string(), String::new()];
     let mut content_lines: Vec<String> = Vec::new();
 
+    // Footer lines (shown at the bottom, outside scrollable area)
+    let footer_lines: Vec<String> = if shell_integration_detected {
+        Vec::new()
+    } else {
+        vec![
+            String::new(),
+            "Shell integration not detected".to_string(),
+            "Source scripts/shell/yatmux.bash in your shell".to_string(),
+        ]
+    };
+
     let mut max_line_len = title.len();
+    for line in &footer_lines {
+        max_line_len = max_line_len.max(line.len());
+    }
     for (section_idx, section) in sections.iter().enumerate() {
         if section_idx > 0 {
             content_lines.push(String::new());
@@ -51,7 +71,8 @@ pub fn paint_help_overlay(
     }
 
     let box_cols = (max_line_len + padding_cells_x * 2).min(buffer_width / cell_w);
-    let total_rows = fixed_lines.len() + content_lines.len() + padding_cells_y * 2;
+    let total_rows =
+        fixed_lines.len() + content_lines.len() + footer_lines.len() + padding_cells_y * 2;
     let box_rows = total_rows.min(buffer_height / cell_h);
 
     let box_w = box_cols * cell_w;
@@ -60,7 +81,7 @@ pub fn paint_help_overlay(
     let origin_y = buffer_height.saturating_sub(box_h) / 2;
 
     // Background
-    let bg = 0x1A1A1A;
+    let bg = bg;
     let border = accent_color;
 
     for y in origin_y..(origin_y + box_h).min(buffer_height) {
@@ -84,7 +105,8 @@ pub fn paint_help_overlay(
 
     let content_rows = box_rows
         .saturating_sub(padding_cells_y * 2)
-        .saturating_sub(fixed_lines.len());
+        .saturating_sub(fixed_lines.len())
+        .saturating_sub(footer_lines.len());
     let max_scroll = content_lines.len().saturating_sub(content_rows);
     let scroll = scroll_offset.min(max_scroll);
 
@@ -106,11 +128,12 @@ pub fn paint_help_overlay(
             scroll,
             max_scroll,
             accent_color,
+            footer_color,
         );
     }
 
     // Text
-    let text_color = 0xFFFFFF;
+    let text_color = text_color;
     let mut y = origin_y + padding_cells_y * cell_h;
 
     for (idx, line) in fixed_lines.iter().enumerate() {
@@ -163,6 +186,27 @@ pub fn paint_help_overlay(
         y += cell_h;
     }
 
+    // Footer (shell integration hint)
+    let footer_color = footer_color;
+    for line in &footer_lines {
+        draw_text_line(
+            backbuffer,
+            buffer_width,
+            buffer_height,
+            origin_x,
+            origin_y,
+            box_w,
+            box_h,
+            cell_w,
+            padding_cells_x,
+            font_scale,
+            y,
+            line,
+            footer_color,
+        );
+        y += cell_h;
+    }
+
     (scroll, max_scroll)
 }
 
@@ -183,6 +227,7 @@ fn draw_scrollbar(
     scroll: usize,
     max_scroll: usize,
     accent_color: u32,
+    footer_color: u32,
 ) {
     let track_y0 = origin_y + padding_cells_y * cell_h + fixed_lines_len * cell_h;
     let track_y1 = origin_y + box_h - padding_cells_y * cell_h;
@@ -213,7 +258,7 @@ fn draw_scrollbar(
     let bar_x1 = (origin_x + box_w).min(buffer_width).saturating_sub(2);
     let bar_x0 = bar_x1.saturating_sub(bar_w);
 
-    let track_color = 0x333333;
+    let track_color = footer_color;
     let thumb_color = accent_color;
 
     for y in track_y0..track_y1 {

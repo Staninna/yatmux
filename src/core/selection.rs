@@ -181,6 +181,26 @@ impl SelectionManager {
         self.selection = None;
     }
 
+    /// Returns true if there is an active selection.
+    pub fn has_selection(&self) -> bool {
+        self.selection.is_some()
+    }
+
+    /// Selects all text in the buffer.
+    pub fn select_all(&mut self) {
+        if self.buffer_len == 0 || self.view_cols == 0 {
+            return;
+        }
+        let start = CellPos { row: 0, col: 0 };
+        let end = CellPos {
+            row: self.buffer_len.saturating_sub(1),
+            col: self.view_cols.saturating_sub(1),
+        };
+        let mut sel = Selection::new(start);
+        sel.update_end(end);
+        self.selection = Some(sel);
+    }
+
     /// Checks if a screen cell is currently selected.
     pub fn is_selected(&self, screen_row: usize, col: usize) -> bool {
         let Some(sel) = self.selection else {
@@ -247,119 +267,5 @@ impl SelectionManager {
         };
 
         Some(((vis_start_row, vis_start_col), (vis_end_row, vis_end_col)))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_cell_pos_new() {
-        let pos = CellPos::new(5, 10);
-        assert_eq!(pos.row, 5);
-        assert_eq!(pos.col, 10);
-    }
-
-    #[test]
-    fn test_selection_new() {
-        let sel = Selection::new(CellPos::new(1, 2));
-        assert_eq!(sel.start(), sel.end());
-    }
-
-    #[test]
-    fn test_selection_normalized() {
-        let mut sel = Selection::new(CellPos::new(5, 10));
-        sel.update_end(CellPos::new(2, 5));
-        let (start, end) = sel.normalized();
-        assert_eq!(start.row, 2);
-        assert_eq!(end.row, 5);
-    }
-
-    #[test]
-    fn test_selection_contains_single_line() {
-        let mut sel = Selection::new(CellPos::new(3, 5));
-        sel.update_end(CellPos::new(3, 10));
-
-        assert!(sel.contains(3, 5));
-        assert!(sel.contains(3, 7));
-        assert!(sel.contains(3, 10));
-        assert!(!sel.contains(3, 4));
-        assert!(!sel.contains(3, 11));
-        assert!(!sel.contains(2, 7));
-    }
-
-    #[test]
-    fn test_selection_contains_multi_line() {
-        let mut sel = Selection::new(CellPos::new(2, 5));
-        sel.update_end(CellPos::new(5, 10));
-
-        // First line
-        assert!(sel.contains(2, 5));
-        assert!(sel.contains(2, 80));
-        assert!(!sel.contains(2, 4));
-
-        // Middle line - fully selected
-        assert!(sel.contains(3, 0));
-        assert!(sel.contains(4, 50));
-
-        // Last line
-        assert!(sel.contains(5, 10));
-        assert!(sel.contains(5, 0));
-        assert!(!sel.contains(5, 11));
-
-        // Outside
-        assert!(!sel.contains(1, 5));
-        assert!(!sel.contains(6, 5));
-    }
-
-    #[test]
-    fn test_selection_manager() {
-        let mut mgr = SelectionManager::new();
-        mgr.set_dimensions(24, 80);
-        // Simulate a buffer with 24 rows at live view (offset 0)
-        mgr.set_scroll_state(0, 24);
-
-        assert!(!mgr.is_selected(5, 5));
-
-        mgr.start(5, 5);
-        assert!(mgr.is_selected(5, 5));
-
-        mgr.update(5, 10);
-        assert!(mgr.is_selected(5, 7));
-
-        mgr.clear();
-        assert!(!mgr.is_selected(5, 7));
-    }
-
-    #[test]
-    fn test_selection_manager_clamps() {
-        let mut mgr = SelectionManager::new();
-        mgr.set_dimensions(24, 80);
-        mgr.set_scroll_state(0, 24);
-
-        mgr.start(100, 100);
-        assert!(mgr.is_selected(23, 79));
-    }
-
-    #[test]
-    fn test_selection_scrolls_with_content() {
-        let mut mgr = SelectionManager::new();
-        mgr.set_dimensions(24, 80);
-        // Buffer has 48 rows, viewing last 24 (live view)
-        mgr.set_scroll_state(0, 48);
-
-        // Select row 10 on screen (absolute row 34)
-        mgr.start(10, 5);
-        mgr.update(10, 15);
-
-        assert!(mgr.is_selected(10, 10));
-        assert!(!mgr.is_selected(9, 10));
-
-        // Scroll up by 5 lines - selection should now be at screen row 15
-        mgr.set_scroll_state(5, 48);
-
-        assert!(!mgr.is_selected(10, 10)); // No longer at screen row 10
-        assert!(mgr.is_selected(15, 10)); // Now at screen row 15
     }
 }

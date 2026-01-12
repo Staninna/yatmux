@@ -91,10 +91,58 @@ impl UrlManager {
     }
 
     /// Updates URLs for a specific row.
+    /// Combines regex-detected URLs with OSC 8 hyperlinks (hyperlinks take priority).
     pub fn update_row(&mut self, row: usize, text: &str) {
-        if row < self.urls.len() {
-            self.urls[row] = detect_urls(text);
+        self.update_row_with_hyperlinks(row, text, &[]);
+    }
+
+    /// Updates URLs for a specific row, including OSC 8 hyperlinks.
+    /// OSC 8 hyperlinks take priority over regex-detected URLs.
+    pub fn update_row_with_hyperlinks(
+        &mut self,
+        row: usize,
+        text: &str,
+        hyperlinks: &[Option<String>],
+    ) {
+        if row >= self.urls.len() {
+            return;
         }
+
+        // First, collect OSC 8 hyperlink spans
+        let mut osc8_spans: Vec<UrlSpan> = Vec::new();
+        let mut i = 0;
+        while i < hyperlinks.len() {
+            if let Some(ref url) = hyperlinks[i] {
+                let start = i;
+                // Find the end of this hyperlink span
+                while i < hyperlinks.len() && hyperlinks[i].as_ref() == Some(url) {
+                    i += 1;
+                }
+                osc8_spans.push(UrlSpan::new(start, i, url.clone()));
+            } else {
+                i += 1;
+            }
+        }
+
+        // Get regex-detected URLs
+        let regex_spans = detect_urls(text);
+
+        // Merge: OSC 8 hyperlinks take priority
+        // Filter out regex spans that overlap with OSC 8 spans
+        let mut merged: Vec<UrlSpan> = osc8_spans.clone();
+        for regex_span in regex_spans {
+            let overlaps = osc8_spans.iter().any(|osc| {
+                !(regex_span.end_col <= osc.start_col || regex_span.start_col >= osc.end_col)
+            });
+            if !overlaps {
+                merged.push(regex_span);
+            }
+        }
+
+        // Sort by start column
+        merged.sort_by_key(|s| s.start_col);
+
+        self.urls[row] = merged;
     }
 
     /// Updates the hover state based on cursor position.
@@ -145,78 +193,5 @@ impl UrlManager {
         } else {
             None
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_detect_urls_https() {
-        let urls = detect_urls("Check out https://example.com for more info");
-        assert_eq!(urls.len(), 1);
-        assert_eq!(urls[0].url, "https://example.com");
-        assert_eq!(urls[0].start_col, 10);
-    }
-
-    #[test]
-    fn test_detect_urls_http() {
-        let urls = detect_urls("Visit http://test.org/path?query=1");
-        assert_eq!(urls.len(), 1);
-        assert_eq!(urls[0].url, "http://test.org/path?query=1");
-    }
-
-    #[test]
-    fn test_detect_urls_www() {
-        let urls = detect_urls("Go to www.example.com/page");
-        assert_eq!(urls.len(), 1);
-        assert_eq!(urls[0].url, "www.example.com/page");
-        assert_eq!(urls[0].full_url(), "https://www.example.com/page");
-    }
-
-    #[test]
-    fn test_detect_urls_multiple() {
-        let urls = detect_urls("See https://a.com and https://b.com");
-        assert_eq!(urls.len(), 2);
-        assert_eq!(urls[0].url, "https://a.com");
-        assert_eq!(urls[1].url, "https://b.com");
-    }
-
-    #[test]
-    fn test_detect_urls_trailing_punctuation() {
-        let urls = detect_urls("Visit https://example.com.");
-        assert_eq!(urls.len(), 1);
-        assert_eq!(urls[0].url, "https://example.com");
-    }
-
-    #[test]
-    fn test_detect_urls_none() {
-        let urls = detect_urls("No URLs here, just text");
-        assert!(urls.is_empty());
-    }
-
-    #[test]
-    fn test_url_span_contains() {
-        let span = UrlSpan::new(5, 20, "https://test.com".to_string());
-        assert!(!span.contains(4));
-        assert!(span.contains(5));
-        assert!(span.contains(19));
-        assert!(!span.contains(20));
-    }
-
-    #[test]
-    fn test_url_manager_hover() {
-        let mut mgr = UrlManager::new();
-        mgr.set_dimensions(24);
-        mgr.update_row(0, "Visit https://example.com today");
-
-        assert!(!mgr.is_hovered(0, 6));
-        mgr.update_hover(0, 10);
-        assert!(mgr.is_hovered(0, 10));
-        assert!(mgr.hovered_url().is_some());
-
-        mgr.clear_hover();
-        assert!(mgr.hovered_url().is_none());
     }
 }

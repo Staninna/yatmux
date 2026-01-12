@@ -2,13 +2,14 @@
 //!
 //! These tests verify config parsing, serialization, and keybind functionality.
 
-use term::config::{Action, Config, Keybind, KeybindConfig};
-use term::constants::{DEFAULT_BG_COLOR, DEFAULT_ROWS};
+use yatmux::config::{Action, Config, Keybind, KeybindConfig};
+use yatmux::constants::{DEFAULT_BG_COLOR, DEFAULT_ROWS};
+use yatmux::renderer::UiStyle;
 
 #[test]
 fn test_default_config() {
     let config = Config::default();
-    assert_eq!(config.window.title, "term");
+    assert_eq!(config.window.title, "yatmux");
     assert_eq!(config.colors.background, DEFAULT_BG_COLOR);
     assert_eq!(config.colors.accent, 0x66AAFF);
     assert_eq!(config.terminal.rows, DEFAULT_ROWS);
@@ -27,6 +28,13 @@ fn test_config_parse() {
 
         [terminal]
         scrollback_lines = 10000
+
+        [theme]
+        name = "example"
+        imports = ["./extra.toml"]
+
+        [interaction]
+        click_move_max_steps = 123
     "#;
 
     let config: Config = toml::from_str(toml).unwrap();
@@ -35,6 +43,8 @@ fn test_config_parse() {
     assert_eq!(config.colors.foreground, 0xFFFFFF);
     assert_eq!(config.colors.accent, 0x123456);
     assert_eq!(config.terminal.scrollback_lines, 10000);
+    assert_eq!(config.theme.name.as_deref(), Some("example"));
+    assert_eq!(config.interaction.click_move_max_steps, 123);
 }
 
 #[test]
@@ -47,6 +57,43 @@ fn test_config_serialize() {
     assert!(toml.contains("background = \"#"));
     assert!(toml.contains("foreground = \"#"));
     assert!(toml.contains("accent = \"#"));
+}
+
+#[test]
+fn test_hex_color_rgb_shorthand() {
+    let toml = r##"
+        [colors]
+        background = "#0aF"
+    "##;
+
+    let config: Config = toml::from_str(toml).unwrap();
+    assert_eq!(config.colors.background, 0x00AAFF);
+}
+
+#[test]
+fn test_palette_parses_hex_strings() {
+    let toml = r##"
+        [colors]
+        palette = [
+          "#000000", "#FF5555", "#50FA7B", "#F1FA8C",
+          "#BD93F9", "#FF79C6", "#8BE9FD", "#F8F8F2",
+          "#6272A4", "#FF6E6E", "#69FF94", "#FFFFA5",
+          "#D6ACFF", "#FF92DF", "#A4FFFF", "#FFFFFF",
+        ]
+    "##;
+
+    let config: Config = toml::from_str(toml).unwrap();
+    assert!(config.colors.palette.is_some());
+    assert_eq!(config.colors.palette.unwrap()[1], 0xFF5555);
+}
+
+#[test]
+fn test_ui_style_derives_from_colors() {
+    let config = Config::default();
+    let style = UiStyle::from_config(&config);
+    assert_eq!(style.accent, config.colors.accent);
+    assert_eq!(style.base_bg, config.colors.background);
+    assert_eq!(style.base_fg, config.colors.foreground);
 }
 
 #[test]

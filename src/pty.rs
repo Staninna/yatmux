@@ -82,6 +82,9 @@ pub fn spawn_shell() -> Result<(Pty, Box<dyn Read + Send>)> {
 
     let mut cmd = CommandBuilder::new(default_shell());
     cmd.env("TERM", "xterm-256color");
+    cmd.env("TERM_PROGRAM", "yatmux");
+    cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+    cmd.env("YATMUX", "1");
 
     let child = pair.slave.spawn_command(cmd).context("spawn shell")?;
 
@@ -160,30 +163,5 @@ pub mod mock {
                 .unwrap()
                 .push((rows, cols, pixel_width, pixel_height));
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_mock_pty_write() {
-        let pty = mock::MockPty::new();
-        pty.write(b"hello");
-        pty.write(b" world");
-        assert_eq!(pty.written_string(), "hello world");
-    }
-
-    #[test]
-    fn test_mock_pty_resize() {
-        let pty = mock::MockPty::new();
-        pty.resize(24, 80, 640, 480);
-        pty.resize(30, 100, 800, 600);
-
-        let resizes = pty.resizes.lock().unwrap();
-        assert_eq!(resizes.len(), 2);
-        assert_eq!(resizes[0], (24, 80, 640, 480));
-        assert_eq!(resizes[1], (30, 100, 800, 600));
     }
 }

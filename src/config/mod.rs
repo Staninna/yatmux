@@ -1,16 +1,43 @@
 //! Runtime configuration for the terminal emulator.
 //!
-//! Configuration is loaded from `~/.config/term/config.toml` if it exists,
+//! Configuration is loaded from `~/.config/yatmux/config.toml` if it exists,
 //! otherwise defaults are used.
 
 mod action;
+mod builtin_themes;
+mod colors;
+mod config;
+mod font;
+mod interaction;
 mod keybind;
+mod load;
+mod merge;
+mod pane;
+mod serde_hex;
+mod shell_integration;
+mod terminal;
+mod theme;
+mod ui;
+mod window;
 
 pub use action::Action;
+pub use colors::ColorConfig;
+pub use config::Config;
+pub use font::FontConfig;
+pub use interaction::InteractionConfig;
 pub use keybind::{Keybind, KeybindConfig};
+pub use pane::PaneConfig;
+pub use shell_integration::{ShadowPromptMode, ShellIntegrationConfig, TabTitleSource};
+pub use terminal::TerminalConfig;
+pub use theme::ThemeConfig;
+pub use ui::{
+    UiConfig, UiContextMenuConfig, UiDividerConfig, UiHelpConfig, UiSearchConfig,
+    UiShadowPromptConfig, UiStickyPromptConfig, UiTabBarConfig, UiToastConfig,
+};
+pub use window::WindowConfig;
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -19,296 +46,5 @@ use crate::constants::{
     SCROLL_SPEED_MULTIPLIER, SCROLLBACK_CAPACITY, TAB_STOP_WIDTH,
 };
 
-/// Serde module for serializing colors as hex strings like "#RRGGBB".
-mod hex_color {
-    use serde::{self, Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(color: &u32, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&format!("#{:06X}", color))
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<u32, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::Error;
-
-        // Accept either a string ("#RRGGBB", "0xRRGGBB") or an integer
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum ColorValue {
-            String(String),
-            Int(u32),
-        }
-
-        match ColorValue::deserialize(deserializer)? {
-            ColorValue::Int(n) => Ok(n),
-            ColorValue::String(s) => {
-                parse_color(&s).ok_or_else(|| Error::custom("invalid color format"))
-            }
-        }
-    }
-
-    fn parse_color(s: &str) -> Option<u32> {
-        let s = s.trim().trim_start_matches('#').trim_start_matches("0x");
-        u32::from_str_radix(s, 16).ok()
-    }
-}
-
-/// Main configuration structure.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Config {
-    pub window: WindowConfig,
-    pub colors: ColorConfig,
-    pub terminal: TerminalConfig,
-    pub font: FontConfig,
-    pub pane: PaneConfig,
-    pub keybinds: KeybindConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            window: WindowConfig::default(),
-            colors: ColorConfig::default(),
-            terminal: TerminalConfig::default(),
-            font: FontConfig::default(),
-            pane: PaneConfig::default(),
-            keybinds: KeybindConfig::default(),
-        }
-    }
-}
-
-impl Config {
-    /// Applies any missing defaults and clamps values to sane ranges.
-    ///
-    /// Note: `serde(default)` already fills in most missing fields, but
-    /// collection-like configs (like `keybinds`) need explicit merging to pick
-    /// up newly added defaults without overwriting user customizations.
-    pub fn apply_defaults(&mut self) {
-        self.keybinds.apply_defaults();
-
-        // Keep rendering/input assumptions intact.
-        self.font.scale = self.font.scale.clamp(1, 8);
-
-        self.terminal.rows = self.terminal.rows.max(1);
-        self.terminal.cols = self.terminal.cols.max(1);
-        self.terminal.scrollback_lines = self.terminal.scrollback_lines.max(1);
-        self.terminal.tab_width = self.terminal.tab_width.max(1);
-
-        if !self.terminal.scroll_speed.is_finite() || self.terminal.scroll_speed <= 0.0 {
-            self.terminal.scroll_speed = SCROLL_SPEED_MULTIPLIER;
-        }
-    }
-
-    /// Loads configuration from the default path.
-    /// If config file doesn't exist, writes defaults and returns them.
-    pub fn load() -> Self {
-        let Some(path) = Self::config_path() else {
-            return Config::default();
-        };
-
-        // Try to read existing config
-        if let Ok(contents) = fs::read_to_string(&path) {
-            if let Ok(mut config) = toml::from_str::<Config>(&contents) {
-                config.apply_defaults();
-                return config;
-            }
-            // Config exists but is invalid - don't overwrite, just use defaults
-            eprintln!(
-                "Warning: invalid config at {}, using defaults",
-                path.display()
-            );
-            return Config::default();
-        }
-
-        // Config doesn't exist - create default
-        let config = Config::default();
-        if let Err(e) = config.save() {
-            eprintln!("Warning: could not write default config: {e}");
-        }
-        config
-    }
-
-    /// Returns the configuration file path.
-    pub fn config_path() -> Option<PathBuf> {
-        dirs::config_dir().map(|p| p.join("term").join("config.toml"))
-    }
-
-    /// Saves the configuration to the default path.
-    #[allow(dead_code)]
-    pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let path = Self::config_path().ok_or("Could not determine config directory")?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let contents = toml::to_string_pretty(self)?;
-        fs::write(path, contents)?;
-        Ok(())
-    }
-}
-
-/// Window configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct WindowConfig {
-    pub title: String,
-}
-
-impl Default for WindowConfig {
-    fn default() -> Self {
-        WindowConfig {
-            title: "term".to_string(),
-        }
-    }
-}
-
-/// Color configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ColorConfig {
-    /// Background color in hex format (#RRGGBB).
-    #[serde(with = "hex_color")]
-    pub background: u32,
-    /// Foreground color in hex format (#RRGGBB).
-    #[serde(with = "hex_color")]
-    pub foreground: u32,
-    /// Accent color used for UI highlights (focused pane, help border).
-    #[serde(with = "hex_color")]
-    pub accent: u32,
-    /// Optional custom 16-color palette (ANSI colors 0-15).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub palette: Option<[u32; 16]>,
-}
-
-impl Default for ColorConfig {
-    fn default() -> Self {
-        ColorConfig {
-            background: DEFAULT_BG_COLOR,
-            foreground: DEFAULT_FG_COLOR,
-            accent: 0x66AAFF,
-            palette: None,
-        }
-    }
-}
-
-/// Terminal behavior configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct TerminalConfig {
-    /// Default number of rows.
-    pub rows: u16,
-    /// Default number of columns.
-    pub cols: u16,
-    /// Maximum lines in scrollback buffer.
-    pub scrollback_lines: usize,
-    /// Lines to scroll per mouse wheel tick.
-    pub scroll_speed: f32,
-    /// Tab stop width in characters.
-    pub tab_width: usize,
-}
-
-impl Default for TerminalConfig {
-    fn default() -> Self {
-        TerminalConfig {
-            rows: DEFAULT_ROWS,
-            cols: DEFAULT_COLS,
-            scrollback_lines: SCROLLBACK_CAPACITY,
-            scroll_speed: SCROLL_SPEED_MULTIPLIER,
-            tab_width: TAB_STOP_WIDTH,
-        }
-    }
-}
-
-/// Font configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct FontConfig {
-    /// Font scale multiplier (1 = 8x8, 2 = 16x16, etc.).
-    pub scale: usize,
-}
-
-impl Default for FontConfig {
-    fn default() -> Self {
-        FontConfig { scale: FONT_SCALE }
-    }
-}
-
-/// Pane configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct PaneConfig {
-    /// Padding in pixels for all sides (overridden by specific side settings).
-    #[serde(default)]
-    padding: Option<usize>,
-    /// Padding in pixels on the left side of each pane.
-    #[serde(default)]
-    padding_left: Option<usize>,
-    /// Padding in pixels on the right side of each pane.
-    #[serde(default)]
-    padding_right: Option<usize>,
-    /// Padding in pixels on the top of each pane.
-    #[serde(default)]
-    padding_top: Option<usize>,
-    /// Padding in pixels on the bottom of each pane.
-    #[serde(default)]
-    padding_bottom: Option<usize>,
-    /// Minimum pane size in pixels (prevents splitting below this size).
-    #[serde(default)]
-    pub min_size: Option<usize>,
-}
-
-const DEFAULT_PANE_PADDING: usize = 8;
-const DEFAULT_MIN_PANE_SIZE: usize = 100;
-
-impl Default for PaneConfig {
-    fn default() -> Self {
-        PaneConfig {
-            padding: None,
-            padding_left: None,
-            padding_right: None,
-            padding_top: None,
-            padding_bottom: None,
-            min_size: None,
-        }
-    }
-}
-
-impl PaneConfig {
-    /// Returns the effective left padding.
-    pub fn padding_left(&self) -> usize {
-        self.padding_left
-            .or(self.padding)
-            .unwrap_or(DEFAULT_PANE_PADDING)
-    }
-
-    /// Returns the effective right padding.
-    pub fn padding_right(&self) -> usize {
-        self.padding_right
-            .or(self.padding)
-            .unwrap_or(DEFAULT_PANE_PADDING)
-    }
-
-    /// Returns the effective top padding.
-    pub fn padding_top(&self) -> usize {
-        self.padding_top
-            .or(self.padding)
-            .unwrap_or(DEFAULT_PANE_PADDING)
-    }
-
-    /// Returns the effective bottom padding.
-    pub fn padding_bottom(&self) -> usize {
-        self.padding_bottom
-            .or(self.padding)
-            .unwrap_or(DEFAULT_PANE_PADDING)
-    }
-
-    /// Returns the minimum pane size in pixels.
-    pub fn min_size(&self) -> usize {
-        self.min_size.unwrap_or(DEFAULT_MIN_PANE_SIZE)
-    }
-}
+// Make serde helper modules available for `#[serde(with = "...")]` in submodules.
+use serde_hex::{hex_color, hex_color_opt, hex_palette_opt};
