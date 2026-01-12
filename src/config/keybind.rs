@@ -132,6 +132,11 @@ impl Default for KeybindConfig {
         bindings.insert("down".to_string(), Action::SearchNext);
         bindings.insert("up".to_string(), Action::SearchPrev);
 
+        // Shell integration actions
+        bindings.insert("ctrl+shift+o".to_string(), Action::CopyLastOutput);
+        bindings.insert("ctrl+shift+pageup".to_string(), Action::JumpToPrevPrompt);
+        bindings.insert("ctrl+shift+pagedown".to_string(), Action::JumpToNextPrompt);
+
         KeybindConfig { bindings }
     }
 }
