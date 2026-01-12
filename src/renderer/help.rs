@@ -18,6 +18,7 @@ pub fn paint_help_overlay(
     scroll_offset: usize,
     accent_color: u32,
     font_scale: usize,
+    shell_integration_detected: bool,
 ) -> (usize, usize) {
     let font_scale = font_scale.clamp(1, 8);
     let cell_w = 8 * font_scale;
@@ -33,7 +34,21 @@ pub fn paint_help_overlay(
     let fixed_lines = vec![title.to_string(), String::new()];
     let mut content_lines: Vec<String> = Vec::new();
 
+    // Footer lines (shown at the bottom, outside scrollable area)
+    let footer_lines: Vec<String> = if shell_integration_detected {
+        Vec::new()
+    } else {
+        vec![
+            String::new(),
+            "Shell integration not detected".to_string(),
+            "Source scripts/shell/yatmux.bash in your shell".to_string(),
+        ]
+    };
+
     let mut max_line_len = title.len();
+    for line in &footer_lines {
+        max_line_len = max_line_len.max(line.len());
+    }
     for (section_idx, section) in sections.iter().enumerate() {
         if section_idx > 0 {
             content_lines.push(String::new());
@@ -51,7 +66,8 @@ pub fn paint_help_overlay(
     }
 
     let box_cols = (max_line_len + padding_cells_x * 2).min(buffer_width / cell_w);
-    let total_rows = fixed_lines.len() + content_lines.len() + padding_cells_y * 2;
+    let total_rows =
+        fixed_lines.len() + content_lines.len() + footer_lines.len() + padding_cells_y * 2;
     let box_rows = total_rows.min(buffer_height / cell_h);
 
     let box_w = box_cols * cell_w;
@@ -84,7 +100,8 @@ pub fn paint_help_overlay(
 
     let content_rows = box_rows
         .saturating_sub(padding_cells_y * 2)
-        .saturating_sub(fixed_lines.len());
+        .saturating_sub(fixed_lines.len())
+        .saturating_sub(footer_lines.len());
     let max_scroll = content_lines.len().saturating_sub(content_rows);
     let scroll = scroll_offset.min(max_scroll);
 
@@ -159,6 +176,27 @@ pub fn paint_help_overlay(
             y,
             line,
             text_color,
+        );
+        y += cell_h;
+    }
+
+    // Footer (shell integration hint)
+    let footer_color = 0x888888; // Dimmed text for hint
+    for line in &footer_lines {
+        draw_text_line(
+            backbuffer,
+            buffer_width,
+            buffer_height,
+            origin_x,
+            origin_y,
+            box_w,
+            box_h,
+            cell_w,
+            padding_cells_x,
+            font_scale,
+            y,
+            line,
+            footer_color,
         );
         y += cell_h;
     }

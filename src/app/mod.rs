@@ -9,18 +9,20 @@ pub mod tab;
 
 use std::io::Read;
 use std::thread;
+use std::time::Instant;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
+use winit::keyboard::{Key, NamedKey};
 use winit::window::WindowId;
 
-use term::clipboard::{ClipboardProvider, SystemClipboard};
-use term::config::{Action, Config};
-use term::constants::{CELL_H, READ_BUFFER_SIZE};
-use term::keys::key_to_pty_bytes;
-use term::renderer::Renderer;
+use yatmux::clipboard::{ClipboardProvider, SystemClipboard};
+use yatmux::config::{Action, Config, ShadowPromptMode};
+use yatmux::constants::{CELL_H, READ_BUFFER_SIZE};
+use yatmux::keys::key_to_pty_bytes;
+use yatmux::renderer::Renderer;
 
 use graphics::GraphicsState;
 use input::{InputState, apply_search_input, key_event_to_string};
@@ -78,6 +80,11 @@ pub struct App {
     pub help_scroll: usize,
     pub help_max_scroll: usize,
     pub should_exit: bool,
+
+    last_window_title: Option<String>,
+
+    /// Toast message state (message, show time)
+    toast: Option<(String, Instant)>,
 }
 
 impl App {
@@ -101,6 +108,8 @@ impl App {
             help_scroll: 0,
             help_max_scroll: 0,
             should_exit: false,
+            last_window_title: None,
+            toast: None,
         }
     }
 
@@ -128,6 +137,25 @@ impl App {
     /// Returns a mutable reference to the focused pane in the active tab.
     pub fn focused_pane_mut(&mut self) -> Option<&mut Pane> {
         self.active_tab_mut().and_then(|t| t.focused_pane_mut())
+    }
+
+    /// Shows a toast message for a short duration.
+    pub fn show_toast(&mut self, message: impl Into<String>) {
+        self.toast = Some((message.into(), Instant::now()));
+        self.request_redraw();
+    }
+
+    /// Returns the current toast message if it should still be visible.
+    /// Toast duration is 1.5 seconds.
+    pub fn current_toast(&self) -> Option<&str> {
+        const TOAST_DURATION_MS: u128 = 1500;
+        self.toast.as_ref().and_then(|(msg, time)| {
+            if time.elapsed().as_millis() < TOAST_DURATION_MS {
+                Some(msg.as_str())
+            } else {
+                None
+            }
+        })
     }
 
     /// Computes pane rectangles for the active tab.
@@ -189,6 +217,7 @@ impl App {
         self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
         self.layout_dirty = true;
+        self.refresh_active_tab_title_from_focused_pane();
         id
     }
 
@@ -211,6 +240,7 @@ impl App {
         }
 
         self.layout_dirty = true;
+        self.refresh_active_tab_title_from_focused_pane();
     }
 
     /// Closes the active tab.
@@ -225,6 +255,7 @@ impl App {
         }
         self.active_tab = (self.active_tab + 1) % self.tabs.len();
         self.layout_dirty = true;
+        self.refresh_active_tab_title_from_focused_pane();
         self.request_redraw();
     }
 
@@ -239,6 +270,7 @@ impl App {
             self.active_tab - 1
         };
         self.layout_dirty = true;
+        self.refresh_active_tab_title_from_focused_pane();
         self.request_redraw();
     }
 
@@ -247,6 +279,7 @@ impl App {
         if index < self.tabs.len() {
             self.active_tab = index;
             self.layout_dirty = true;
+            self.refresh_active_tab_title_from_focused_pane();
             self.request_redraw();
         }
     }
@@ -349,6 +382,9 @@ impl App {
                     | Action::ResizeDown
                     | Action::ClosePane
                     | Action::ToggleHelp
+                    | Action::CopyLastOutput
+                    | Action::JumpToPrevPrompt
+                    | Action::JumpToNextPrompt
             ) {
                 self.execute_action(action);
                 return;
@@ -357,6 +393,7 @@ impl App {
 
         let mut needs_redraw = false;
         let mut action_to_execute: Option<Action> = None;
+        let shadow_mode = self.config.shell_integration.shadow_prompt;
 
         {
             let Some(tab) = self.active_tab_mut() else {
@@ -371,22 +408,47 @@ impl App {
             } else if let Some(action) = non_search_action {
                 action_to_execute = Some(action);
             } else {
-                // Regular text input.
-                if !ctrl && !alt {
-                    if let Some(text) = &event.text {
-                        if !text.is_empty() {
-                            pane.view.scrollback_snap_to_bottom();
-                            pane.terminal.write(text.as_bytes());
-                            needs_redraw = true;
+                // Check if this is Enter key - only snap to bottom on Enter
+                let is_enter = matches!(event.logical_key, Key::Named(NamedKey::Enter));
+
+                // Check if we should use shadow prompt (command is running - use cached state)
+                let is_command_running =
+                    shadow_mode != ShadowPromptMode::Off && pane.command_running;
+
+                if is_command_running {
+                    // Route input to shadow prompt instead of terminal
+                    needs_redraw |=
+                        Self::handle_shadow_prompt_input(pane, &event.logical_key, modifiers);
+                } else {
+                    // Regular terminal input
+                    if !ctrl && !alt {
+                        if let Some(text) = &event.text {
+                            if !text.is_empty() {
+                                if is_enter {
+                                    pane.view.scrollback_snap_to_bottom();
+                                    // Mark command as running when Enter is pressed
+                                    if shadow_mode != ShadowPromptMode::Off {
+                                        pane.command_running = true;
+                                    }
+                                }
+                                pane.terminal.write(text.as_bytes());
+                                needs_redraw = true;
+                            }
                         }
                     }
-                }
 
-                if !needs_redraw {
-                    if let Some(bytes) = key_to_pty_bytes(&event.logical_key, modifiers) {
-                        pane.view.scrollback_snap_to_bottom();
-                        pane.terminal.write(&bytes);
-                        needs_redraw = true;
+                    if !needs_redraw {
+                        if let Some(bytes) = key_to_pty_bytes(&event.logical_key, modifiers) {
+                            if is_enter {
+                                pane.view.scrollback_snap_to_bottom();
+                                // Mark command as running when Enter is pressed
+                                if shadow_mode != ShadowPromptMode::Off {
+                                    pane.command_running = true;
+                                }
+                            }
+                            pane.terminal.write(&bytes);
+                            needs_redraw = true;
+                        }
                     }
                 }
             }
@@ -399,6 +461,72 @@ impl App {
 
         if needs_redraw {
             self.request_redraw();
+        }
+    }
+
+    /// Handles input for the shadow prompt during command execution.
+    /// Returns true if input was handled and a redraw is needed.
+    fn handle_shadow_prompt_input(
+        pane: &mut Pane,
+        key: &Key,
+        modifiers: winit::keyboard::ModifiersState,
+    ) -> bool {
+        let ctrl = modifiers.control_key();
+        let alt = modifiers.alt_key();
+
+        match key {
+            Key::Named(NamedKey::Backspace) => {
+                pane.shadow_prompt.backspace();
+                true
+            }
+            Key::Named(NamedKey::Delete) => {
+                pane.shadow_prompt.delete();
+                true
+            }
+            Key::Named(NamedKey::ArrowLeft) => {
+                pane.shadow_prompt.move_left();
+                true
+            }
+            Key::Named(NamedKey::ArrowRight) => {
+                pane.shadow_prompt.move_right();
+                true
+            }
+            Key::Named(NamedKey::Home) => {
+                pane.shadow_prompt.move_home();
+                true
+            }
+            Key::Named(NamedKey::End) => {
+                pane.shadow_prompt.move_end();
+                true
+            }
+            Key::Named(NamedKey::Escape) => {
+                // Clear shadow prompt on Escape
+                pane.shadow_prompt.clear();
+                true
+            }
+            Key::Named(NamedKey::Enter) => {
+                // Add newline to buffer (for multi-line commands)
+                pane.shadow_prompt.insert('\n');
+                true
+            }
+            Key::Named(NamedKey::Space) => {
+                if !ctrl && !alt {
+                    pane.shadow_prompt.insert(' ');
+                    true
+                } else {
+                    false
+                }
+            }
+            Key::Character(s) => {
+                // Regular text input (when not ctrl/alt modified)
+                if !ctrl && !alt {
+                    pane.shadow_prompt.insert_str(s);
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
         }
     }
 
@@ -431,6 +559,7 @@ impl App {
         if let Some(tab) = self.active_tab_mut() {
             tab.set_focus(pane_id);
         }
+        self.refresh_active_tab_title_from_focused_pane();
 
         // Extract what we need before borrowing tab mutably
         let local = Self::localize_pos(pane_rect, cursor_pos);
@@ -592,6 +721,185 @@ impl App {
             self.request_redraw();
         }
     }
+
+    fn apply_shell_integration_updates(&mut self, tab_idx: usize, pane: PaneId) {
+        let cfg = &self.config.shell_integration;
+        let tab_id = self.tabs[tab_idx].id;
+        let focused_pane = self.tabs[tab_idx].focused_pane;
+        let is_active_tab = tab_idx == self.active_tab;
+
+        let mut new_title: Option<String> = None;
+
+        {
+            let Some(pane_state) = self.tabs[tab_idx].panes.get_mut(&pane) else {
+                return;
+            };
+
+            if cfg.cwd_from_osc7 {
+                pane_state.shell_cwd = pane_state.terminal.shell_cwd();
+            }
+
+            // Only fetch semantic zones when debug logging is enabled (expensive operation)
+            if cfg.semantic_zones_from_osc133 && cfg.debug_log {
+                if let Ok(zones) = pane_state.terminal.semantic_zones() {
+                    if !zones.is_empty() {
+                        eprintln!("[shell] tab={} pane={} zones:", tab_id, pane);
+                        for zone in &zones {
+                            eprintln!(
+                                "  {:?} rows {}..{}",
+                                zone.semantic_type, zone.start_y, zone.end_y
+                            );
+                        }
+                    }
+                }
+            }
+
+            let status = pane_state.terminal.shell_integration_status();
+            if cfg.debug_log && status != pane_state.shell_integration {
+                eprintln!(
+                    "[shell] tab={} pane={} any={} osc7={} osc133={} title={}",
+                    tab_id,
+                    pane,
+                    status.any(),
+                    status.osc7_cwd,
+                    status.osc133_semantic,
+                    status.osc_title
+                );
+            }
+            pane_state.shell_integration = status;
+
+            // Note: command_running state is now updated in PtyOutput handler
+            // by detecting prompt markers in raw bytes (much cheaper than get_semantic_zones)
+
+            if cfg.title_from_osc {
+                pane_state.shell_title = pane_state.terminal.shell_title();
+            }
+
+            // Only update the tab title based on the focused pane.
+            if focused_pane == pane {
+                new_title = match cfg.tab_title_source {
+                    yatmux::config::TabTitleSource::None => None,
+                    yatmux::config::TabTitleSource::Cwd => pane_state
+                        .shell_cwd
+                        .as_deref()
+                        .map(Self::cwd_url_to_tab_title)
+                        .or_else(|| pane_state.shell_title.clone()),
+                    yatmux::config::TabTitleSource::Title => pane_state.shell_title.clone(),
+                };
+            }
+        }
+
+        if let Some(title) = new_title {
+            let title = Self::sanitize_title(&title);
+            if !title.is_empty() {
+                self.tabs[tab_idx].title = title;
+                if is_active_tab {
+                    self.sync_window_title();
+                }
+            }
+        }
+    }
+
+    fn refresh_active_tab_title_from_focused_pane(&mut self) {
+        let tab_idx = self.active_tab;
+        let cfg = &self.config.shell_integration;
+
+        let Some(tab) = self.tabs.get_mut(tab_idx) else {
+            return;
+        };
+        let focused = tab.focused_pane;
+        let Some(pane) = tab.panes.get(&focused) else {
+            self.sync_window_title();
+            return;
+        };
+
+        let new_title = match cfg.tab_title_source {
+            yatmux::config::TabTitleSource::None => None,
+            yatmux::config::TabTitleSource::Cwd => pane
+                .shell_cwd
+                .as_deref()
+                .map(Self::cwd_url_to_tab_title)
+                .or_else(|| pane.shell_title.clone()),
+            yatmux::config::TabTitleSource::Title => pane.shell_title.clone(),
+        };
+
+        if let Some(title) = new_title {
+            let title = Self::sanitize_title(&title);
+            if !title.is_empty() {
+                tab.title = title;
+            }
+        }
+
+        self.sync_window_title();
+    }
+
+    fn sanitize_title(s: &str) -> String {
+        // Remove newlines/control chars; keep it single-line and readable.
+        s.chars()
+            .filter(|&ch| ch != '\n' && ch != '\r' && !ch.is_control())
+            .collect::<String>()
+            .trim()
+            .to_string()
+    }
+
+    fn cwd_url_to_tab_title(cwd_url: &str) -> String {
+        // Typical OSC 7 payload is a file:// URL.
+        // Prefer showing a friendly basename in the tab bar.
+        let mut s = cwd_url.trim();
+        if let Some(stripped) = s.strip_prefix("file://") {
+            s = stripped;
+        }
+
+        // Drop query/fragment if present.
+        s = s.split(['?', '#']).next().unwrap_or(s);
+
+        // Normalize multiple slashes (e.g. file:///home -> ///home -> /home).
+        while s.starts_with("//") {
+            s = &s[1..];
+        }
+
+        let trimmed = s.trim_end_matches('/');
+        let base = trimmed.rsplit('/').next().unwrap_or(trimmed);
+        if base.is_empty() {
+            "/".to_string()
+        } else {
+            base.to_string()
+        }
+    }
+
+    fn sync_window_title(&mut self) {
+        if !self
+            .config
+            .shell_integration
+            .window_title_follows_active_tab
+        {
+            return;
+        }
+        let Some(graphics) = &self.graphics else {
+            return;
+        };
+
+        let base = self.config.window.title.trim();
+        let tab_title = self
+            .tabs
+            .get(self.active_tab)
+            .map(|t| t.title.trim())
+            .filter(|t| !t.is_empty())
+            .unwrap_or("yatmux");
+
+        let new_title = if base.is_empty() {
+            tab_title.to_string()
+        } else {
+            format!("{tab_title} — {base}")
+        };
+
+        if self.last_window_title.as_deref() == Some(new_title.as_str()) {
+            return;
+        }
+
+        graphics.surface.window().set_title(&new_title);
+        self.last_window_title = Some(new_title);
+    }
 }
 
 impl ApplicationHandler<AppEvent> for App {
@@ -606,12 +914,35 @@ impl ApplicationHandler<AppEvent> for App {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
             AppEvent::PtyOutput { tab, pane, bytes } => {
-                // Find the tab and pane
-                if let Some(t) = self.tabs.iter().find(|t| t.id == tab) {
+                let Some(tab_idx) = self.tabs.iter().position(|t| t.id == tab) else {
+                    return;
+                };
+
+                // Check for prompt marker in raw bytes BEFORE processing
+                // OSC 133;A marks prompt start - means command finished
+                let has_prompt_marker = bytes
+                    .windows(6)
+                    .any(|w| w == b"]133;A" || w == b"]133;B" || w == b"]133;D");
+
+                {
+                    let t = &self.tabs[tab_idx];
                     if let Some(p) = t.panes.get(&pane) {
                         p.terminal.process(&bytes);
                     }
                 }
+
+                // If we detected a prompt marker, flush shadow prompt
+                if has_prompt_marker {
+                    if let Some(pane_state) = self.tabs[tab_idx].panes.get_mut(&pane) {
+                        pane_state.command_running = false;
+                        let buffered = pane_state.shadow_prompt.take();
+                        if !buffered.is_empty() {
+                            pane_state.terminal.write(buffered.as_bytes());
+                        }
+                    }
+                }
+
+                self.apply_shell_integration_updates(tab_idx, pane);
                 self.request_redraw();
             }
             AppEvent::PtyExited { tab, pane } => {

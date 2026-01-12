@@ -3,8 +3,8 @@
 use winit::dpi::PhysicalPosition;
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 
-use term::config::Action;
-use term::renderer::TerminalView;
+use yatmux::config::Action;
+use yatmux::renderer::TerminalView;
 
 /// Input state for mouse and keyboard.
 pub struct InputState {

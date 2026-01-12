@@ -5,11 +5,11 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use softbuffer::{Context, Surface};
-use term::config::Action;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
+use yatmux::config::Action;
 
-use term::renderer::{HelpSection, create_palette};
+use yatmux::renderer::{HelpSection, create_palette};
 
 use crate::app::App;
 use crate::app::layout::{PaneId, Rect, draw_border, fill_rect};
@@ -69,6 +69,7 @@ impl App {
             palette,
         });
 
+        self.sync_window_title();
         self.handle_resize();
         self.request_redraw();
     }
@@ -208,7 +209,10 @@ impl App {
             .tabs
             .iter()
             .enumerate()
-            .map(|(idx, tab)| (tab.title.clone(), idx == self.active_tab))
+            .map(|(idx, tab)| {
+                let is_active = idx == self.active_tab;
+                (tab.title.clone(), is_active)
+            })
             .collect();
 
         // Now get the buffer and do all rendering
@@ -287,6 +291,30 @@ impl App {
                 eprintln!("Render pane {} error: {e:#}", pane_render.id);
             }
 
+            // Render sticky prompt if scrolled up and enabled (not during command execution)
+            if self.config.shell_integration.sticky_prompt
+                && pane.view.is_scrolled_up()
+                && !pane.command_running
+            {
+                if let Some(prompt_info) = pane.terminal.current_prompt_rows() {
+                    self.renderer.paint_sticky_prompt(
+                        &mut buffer,
+                        buffer_width as usize,
+                        buffer_height as usize,
+                        pane_render.content_rect.x,
+                        pane_render.content_rect.y,
+                        pane_render.content_rect.w,
+                        pane_render.content_rect.h,
+                        cell_w,
+                        cell_h,
+                        pane_render.scale,
+                        &prompt_info.rows,
+                        prompt_info.cursor,
+                        &palette,
+                    );
+                }
+            }
+
             // Draw border around the outer pane rect (not the content rect)
             if pane_render.is_focused {
                 draw_border(
@@ -298,6 +326,43 @@ impl App {
                 );
             }
         }
+
+        // Calculate shell integration status before taking the graphics borrow
+        let shell_integration_detected = self
+            .active_tab()
+            .and_then(|t| t.focused_pane())
+            .map(|p| p.shell_integration.any())
+            .unwrap_or(false);
+
+        // Extract toast message before taking the graphics borrow
+        let toast_message = self.current_toast().map(|s| s.to_string());
+
+        // Extract shadow prompt state if visible and command is running (use cached state)
+        let shadow_prompt_info: Option<(String, usize)> = {
+            use yatmux::config::ShadowPromptMode;
+            let mode = self.config.shell_integration.shadow_prompt;
+            if mode == ShadowPromptMode::Off {
+                None
+            } else {
+                self.active_tab()
+                    .and_then(|t| t.focused_pane())
+                    .and_then(|p| {
+                        // Use cached command_running state instead of calling is_command_running()
+                        let should_show = match mode {
+                            ShadowPromptMode::Off => false,
+                            ShadowPromptMode::Always => p.command_running,
+                            ShadowPromptMode::OnTyping => {
+                                p.command_running && p.shadow_prompt.visible
+                            }
+                        };
+                        if should_show {
+                            Some((p.shadow_prompt.buffer.clone(), p.shadow_prompt.cursor))
+                        } else {
+                            None
+                        }
+                    })
+            }
+        };
 
         // Re-acquire buffer for dividers and help overlay
         let Some(graphics) = &mut self.graphics else {
@@ -388,9 +453,33 @@ impl App {
                 self.help_scroll,
                 accent_color,
                 font_scale,
+                shell_integration_detected,
             );
             self.help_scroll = scroll;
             self.help_max_scroll = max_scroll;
+        }
+
+        // Render shadow prompt if visible (during command execution)
+        if let Some((ref input, cursor_pos)) = shadow_prompt_info {
+            self.renderer.paint_shadow_prompt(
+                &mut buffer,
+                buffer_width as usize,
+                buffer_height as usize,
+                input,
+                cursor_pos,
+                font_scale,
+            );
+        }
+
+        // Render toast notification if visible
+        if let Some(ref message) = toast_message {
+            self.renderer.paint_toast(
+                &mut buffer,
+                buffer_width as usize,
+                buffer_height as usize,
+                message,
+                font_scale,
+            );
         }
 
         if let Err(e) = buffer.present() {
@@ -520,7 +609,7 @@ impl App {
 
         let mut char_x = x;
         for ch in text.chars() {
-            let glyph = term::renderer::font::get_glyph(ch);
+            let glyph = yatmux::renderer::font::get_glyph(ch);
             for gy in 0..8 {
                 let bits = glyph[gy];
                 for gx in 0..8 {
