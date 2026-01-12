@@ -148,6 +148,9 @@ pub struct ColorConfig {
     /// Foreground color in hex format (#RRGGBB).
     #[serde(with = "hex_color")]
     pub foreground: u32,
+    /// Accent color used for UI highlights (focused pane, help border).
+    #[serde(with = "hex_color")]
+    pub accent: u32,
     /// Optional custom 16-color palette (ANSI colors 0-15).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub palette: Option<[u32; 16]>,
@@ -158,6 +161,7 @@ impl Default for ColorConfig {
         ColorConfig {
             background: DEFAULT_BG_COLOR,
             foreground: DEFAULT_FG_COLOR,
+            accent: 0x66AAFF,
             palette: None,
         }
     }
@@ -482,6 +486,7 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.window.title, "term");
         assert_eq!(config.colors.background, DEFAULT_BG_COLOR);
+        assert_eq!(config.colors.accent, 0x66AAFF);
         assert_eq!(config.terminal.rows, DEFAULT_ROWS);
     }
 
@@ -494,6 +499,7 @@ mod tests {
             [colors]
             background = 0x000000
             foreground = 0xFFFFFF
+            accent = 0x123456
 
             [terminal]
             scrollback_lines = 10000
@@ -503,6 +509,7 @@ mod tests {
         assert_eq!(config.window.title, "my-term");
         assert_eq!(config.colors.background, 0x000000);
         assert_eq!(config.colors.foreground, 0xFFFFFF);
+        assert_eq!(config.colors.accent, 0x123456);
         assert_eq!(config.terminal.scrollback_lines, 10000);
     }
 
@@ -515,6 +522,7 @@ mod tests {
         // Verify colors are serialized as hex strings
         assert!(toml.contains("background = \"#"));
         assert!(toml.contains("foreground = \"#"));
+        assert!(toml.contains("accent = \"#"));
     }
 
     #[test]

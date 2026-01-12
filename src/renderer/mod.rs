@@ -530,6 +530,7 @@ impl Renderer {
         title: &str,
         sections: &[HelpSection],
         scroll_offset: usize,
+        accent_color: u32,
     ) -> (usize, usize) {
         if buffer_width < CELL_W * 10 || buffer_height < CELL_H * 5 {
             return (0, 0);
@@ -569,7 +570,7 @@ impl Renderer {
 
         // Background
         let bg = 0x1A1A1A;
-        let border = 0x66AAFF;
+        let border = accent_color;
 
         for y in origin_y..(origin_y + box_h).min(buffer_height) {
             let row = y * buffer_width;
@@ -625,7 +626,7 @@ impl Renderer {
                 let bar_x0 = bar_x1.saturating_sub(bar_w);
 
                 let track_color = 0x333333;
-                let thumb_color = 0x66AAFF;
+                let thumb_color = accent_color;
 
                 for y in track_y0..track_y1 {
                     let row = y * buffer_width;

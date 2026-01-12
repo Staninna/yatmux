@@ -753,7 +753,7 @@ impl App {
                     buffer_width as usize,
                     buffer_height as usize,
                     *rect,
-                    0x66AAFF,
+                    self.config.colors.accent,
                 );
             }
         }
@@ -817,6 +817,7 @@ impl App {
                 "Shortcuts",
                 &sections,
                 self.help_scroll,
+                self.config.colors.accent,
             );
             self.help_scroll = scroll;
             self.help_max_scroll = max_scroll;
