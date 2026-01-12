@@ -1,0 +1,14 @@
+# Light theme for yatmux
+# Copy to: ~/.config/yatmux/themes/light.toml
+
+[colors]
+background = "#FFFFFF"
+foreground = "#111111"
+accent = "#0066CC"
+
+palette = [
+  "#000000", "#CC0000", "#008000", "#B58900",
+  "#0066CC", "#A000A0", "#008B8B", "#C0C0C0",
+  "#808080", "#FF0000", "#00A000", "#FFD700",
+  "#0099FF", "#FF00FF", "#00FFFF", "#FFFFFF",
+]
