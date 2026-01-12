@@ -6,7 +6,7 @@ use winit::event_loop::EventLoop;
 mod app;
 
 use app::{App, AppEvent};
-use term::Config;
+use yatmux::Config;
 
 fn main() -> Result<()> {
     // Load configuration

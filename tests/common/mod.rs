@@ -1,7 +1,7 @@
 //! Shared test utilities for terminal tests.
 
-use term::core::grid::RowSnapshot;
 use vt100::Color;
+use yatmux::core::grid::RowSnapshot;
 
 /// Creates a row snapshot from a text string.
 pub fn make_row(text: &str) -> RowSnapshot {

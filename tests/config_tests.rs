@@ -2,13 +2,13 @@
 //!
 //! These tests verify config parsing, serialization, and keybind functionality.
 
-use term::config::{Action, Config, Keybind, KeybindConfig};
-use term::constants::{DEFAULT_BG_COLOR, DEFAULT_ROWS};
+use yatmux::config::{Action, Config, Keybind, KeybindConfig};
+use yatmux::constants::{DEFAULT_BG_COLOR, DEFAULT_ROWS};
 
 #[test]
 fn test_default_config() {
     let config = Config::default();
-    assert_eq!(config.window.title, "term");
+    assert_eq!(config.window.title, "yatmux");
     assert_eq!(config.colors.background, DEFAULT_BG_COLOR);
     assert_eq!(config.colors.accent, 0x66AAFF);
     assert_eq!(config.terminal.rows, DEFAULT_ROWS);
