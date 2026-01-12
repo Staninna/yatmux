@@ -170,18 +170,29 @@ impl SearchState {
             row_text.to_lowercase()
         };
 
-        let mut start = 0;
-        while let Some(pos) = search_text[start..].find(query) {
-            let match_start = start + pos;
-            let match_end = match_start + query.len();
+        // `str::find` returns byte offsets. We must convert to character indices,
+        // since terminal columns are in cells (chars), not bytes.
+        let mut start_byte = 0;
+        while let Some(pos) = search_text[start_byte..].find(query) {
+            let match_start_byte = start_byte + pos;
+            let match_end_byte = match_start_byte + query.len();
+
+            let start_col = search_text[..match_start_byte].chars().count();
+            let end_col = search_text[..match_end_byte].chars().count();
 
             self.matches.push(SearchMatch {
                 row: row_idx,
-                start_col: match_start,
-                end_col: match_end,
+                start_col,
+                end_col,
             });
 
-            start = match_start + 1;
+            // Advance by one character to allow overlapping matches.
+            let advance = search_text[match_start_byte..]
+                .chars()
+                .next()
+                .map(|ch| ch.len_utf8())
+                .unwrap_or(1);
+            start_byte = (match_start_byte + advance).min(search_text.len());
         }
     }
 
@@ -252,10 +263,28 @@ mod tests {
         state.update_matches(&display_rows);
 
         assert_eq!(state.match_count(), 2);
-        assert_eq!(state.matches()[0].row, 0);
-        assert_eq!(state.matches()[0].start_col, 0);
-        assert_eq!(state.matches()[0].end_col, 5);
-        assert_eq!(state.matches()[1].row, 1);
+        assert_eq!(state.matches[0].row, 0);
+        assert_eq!(state.matches[0].start_col, 0);
+        assert_eq!(state.matches[1].row, 1);
+    }
+
+    #[test]
+    fn test_search_columns_with_unicode_prefix() {
+        // Box drawing characters are multibyte in UTF-8.
+        // Ensure match columns are based on *chars*, not byte offsets.
+        let row = make_row("│   base-mail-track-digest256");
+
+        let mut state = SearchState::new();
+        state.activate();
+        for ch in "mail".chars() {
+            state.push_char(ch);
+        }
+
+        state.update_matches(&[row]);
+
+        assert_eq!(state.match_count(), 1);
+        assert_eq!(state.matches[0].start_col, 9);
+        assert_eq!(state.matches[0].end_col, 13);
     }
 
     #[test]
