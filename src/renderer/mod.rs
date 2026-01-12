@@ -9,7 +9,7 @@
 //! (re)index matches do we build a full snapshot of the scrollback.
 
 mod color;
-mod font;
+pub mod font;
 mod help;
 mod painter;
 mod view;

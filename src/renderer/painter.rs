@@ -66,6 +66,7 @@ impl Renderer {
     }
 
     /// Paint a terminal into a region of an existing backbuffer.
+    #[allow(clippy::too_many_arguments)]
     pub fn paint_terminal_region(
         &self,
         backbuffer: &mut [u32],
@@ -475,17 +476,33 @@ impl Renderer {
         let match_count = view.search.match_count();
         let current_idx = view.search.current_match_index();
         let case_indicator = if view.search.is_case_sensitive() {
-            "[Aa]"
+            "Aa"
         } else {
-            "[aa]"
+            "aa"
+        };
+        let regex_indicator = if view.is_search_regex() { ".*" } else { "" };
+
+        let match_info = if !view.is_search_regex_valid() {
+            format!("[{}{}] invalid regex", case_indicator, regex_indicator)
+        } else if match_count > 0 {
+            format!(
+                "{}/{} [{}{}]",
+                current_idx + 1,
+                match_count,
+                case_indicator,
+                regex_indicator
+            )
+        } else if !view.search.query().is_empty() {
+            format!("0/0 [{}{}]", case_indicator, regex_indicator)
+        } else {
+            format!("[{}{}]", case_indicator, regex_indicator)
         };
 
-        let match_info = if match_count > 0 {
-            format!("{}/{} {}", current_idx + 1, match_count, case_indicator)
-        } else if !view.search.query().is_empty() {
-            format!("0/0 {}", case_indicator)
+        // Use red color for invalid regex
+        let info_color = if !view.is_search_regex_valid() {
+            0xFF6666
         } else {
-            case_indicator.to_string()
+            match_info_color
         };
 
         let info_width = match_info.len() * cell_w;
@@ -498,18 +515,8 @@ impl Renderer {
             }
             let glyph = font::get_glyph(ch);
             self.draw_glyph(
-                buffer,
-                width,
-                height,
-                origin_x,
-                origin_y,
-                region_w,
-                region_h,
-                font_scale,
-                x_pos,
-                bar_y,
-                glyph,
-                match_info_color,
+                buffer, width, height, origin_x, origin_y, region_w, region_h, font_scale, x_pos,
+                bar_y, glyph, info_color,
             );
             x_pos += cell_w;
         }

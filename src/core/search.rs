@@ -1,8 +1,21 @@
 //! Search functionality for the terminal scrollback buffer.
 //!
 //! Provides search within terminal history with match highlighting.
+//! Supports both plain text and regex search modes.
+
+use regex::Regex;
 
 use crate::core::grid::RowSnapshot;
+
+/// Search mode type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchMode {
+    /// Plain text search (default).
+    #[default]
+    Plain,
+    /// Regular expression search.
+    Regex,
+}
 
 /// A match location in the scrollback buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +40,12 @@ pub struct SearchState {
     current_match: usize,
     /// Whether search is case-sensitive.
     case_sensitive: bool,
+    /// Search mode (plain text or regex).
+    mode: SearchMode,
+    /// Compiled regex (cached when in regex mode).
+    compiled_regex: Option<Regex>,
+    /// Whether the current regex is valid.
+    regex_valid: bool,
 }
 
 impl Default for SearchState {
@@ -44,6 +63,9 @@ impl SearchState {
             matches: Vec::new(),
             current_match: 0,
             case_sensitive: false,
+            mode: SearchMode::Plain,
+            compiled_regex: None,
+            regex_valid: true,
         }
     }
 
@@ -58,6 +80,8 @@ impl SearchState {
         self.query.clear();
         self.matches.clear();
         self.current_match = 0;
+        self.compiled_regex = None;
+        self.regex_valid = true;
     }
 
     /// Deactivates search mode.
@@ -66,6 +90,8 @@ impl SearchState {
         self.query.clear();
         self.matches.clear();
         self.current_match = 0;
+        self.compiled_regex = None;
+        self.regex_valid = true;
     }
 
     /// Returns the current search query.
@@ -76,21 +102,75 @@ impl SearchState {
     /// Appends a character to the query.
     pub fn push_char(&mut self, ch: char) {
         self.query.push(ch);
+        self.update_compiled_regex();
     }
 
     /// Removes the last character from the query.
     pub fn pop_char(&mut self) {
         self.query.pop();
+        self.update_compiled_regex();
     }
 
     /// Toggles case sensitivity.
     pub fn toggle_case_sensitive(&mut self) {
         self.case_sensitive = !self.case_sensitive;
+        self.update_compiled_regex();
     }
 
     /// Returns whether search is case-sensitive.
     pub fn is_case_sensitive(&self) -> bool {
         self.case_sensitive
+    }
+
+    /// Returns the current search mode.
+    pub fn mode(&self) -> SearchMode {
+        self.mode
+    }
+
+    /// Toggles between plain text and regex search mode.
+    pub fn toggle_mode(&mut self) {
+        self.mode = match self.mode {
+            SearchMode::Plain => SearchMode::Regex,
+            SearchMode::Regex => SearchMode::Plain,
+        };
+        self.update_compiled_regex();
+    }
+
+    /// Sets the search mode.
+    pub fn set_mode(&mut self, mode: SearchMode) {
+        if self.mode != mode {
+            self.mode = mode;
+            self.update_compiled_regex();
+        }
+    }
+
+    /// Returns whether the current regex pattern is valid.
+    pub fn is_regex_valid(&self) -> bool {
+        self.regex_valid
+    }
+
+    /// Updates the compiled regex cache.
+    fn update_compiled_regex(&mut self) {
+        if self.mode == SearchMode::Regex && !self.query.is_empty() {
+            let pattern = if self.case_sensitive {
+                self.query.clone()
+            } else {
+                format!("(?i){}", self.query)
+            };
+            match Regex::new(&pattern) {
+                Ok(re) => {
+                    self.compiled_regex = Some(re);
+                    self.regex_valid = true;
+                }
+                Err(_) => {
+                    self.compiled_regex = None;
+                    self.regex_valid = false;
+                }
+            }
+        } else {
+            self.compiled_regex = None;
+            self.regex_valid = true;
+        }
     }
 
     /// Returns all matches.
@@ -145,14 +225,13 @@ impl SearchState {
             return;
         }
 
-        let query = if self.case_sensitive {
-            self.query.clone()
-        } else {
-            self.query.to_lowercase()
-        };
+        // In regex mode with invalid pattern, don't search
+        if self.mode == SearchMode::Regex && !self.regex_valid {
+            return;
+        }
 
         for (row_idx, row) in all_rows.iter().enumerate() {
-            self.find_matches_in_row(row, row_idx, &query);
+            self.find_matches_in_row(row, row_idx);
         }
 
         // Clamp current_match to valid range
@@ -162,37 +241,66 @@ impl SearchState {
     }
 
     /// Finds all matches in a single row.
-    fn find_matches_in_row(&mut self, row: &RowSnapshot, row_idx: usize, query: &str) {
+    fn find_matches_in_row(&mut self, row: &RowSnapshot, row_idx: usize) {
         let row_text: String = row.cells.iter().map(|(ch, _, _)| *ch).collect();
-        let search_text = if self.case_sensitive {
-            row_text.clone()
-        } else {
-            row_text.to_lowercase()
-        };
 
-        // `str::find` returns byte offsets. We must convert to character indices,
-        // since terminal columns are in cells (chars), not bytes.
-        let mut start_byte = 0;
-        while let Some(pos) = search_text[start_byte..].find(query) {
-            let match_start_byte = start_byte + pos;
-            let match_end_byte = match_start_byte + query.len();
+        match self.mode {
+            SearchMode::Regex => {
+                if let Some(ref re) = self.compiled_regex {
+                    for m in re.find_iter(&row_text) {
+                        // Convert byte offsets to character offsets
+                        let start_col = row_text[..m.start()].chars().count();
+                        let end_col = row_text[..m.end()].chars().count();
 
-            let start_col = search_text[..match_start_byte].chars().count();
-            let end_col = search_text[..match_end_byte].chars().count();
+                        // Skip empty matches
+                        if start_col < end_col {
+                            self.matches.push(SearchMatch {
+                                row: row_idx,
+                                start_col,
+                                end_col,
+                            });
+                        }
+                    }
+                }
+            }
+            SearchMode::Plain => {
+                let search_text = if self.case_sensitive {
+                    row_text.clone()
+                } else {
+                    row_text.to_lowercase()
+                };
 
-            self.matches.push(SearchMatch {
-                row: row_idx,
-                start_col,
-                end_col,
-            });
+                let query = if self.case_sensitive {
+                    self.query.clone()
+                } else {
+                    self.query.to_lowercase()
+                };
 
-            // Advance by one character to allow overlapping matches.
-            let advance = search_text[match_start_byte..]
-                .chars()
-                .next()
-                .map(|ch| ch.len_utf8())
-                .unwrap_or(1);
-            start_byte = (match_start_byte + advance).min(search_text.len());
+                // `str::find` returns byte offsets. We must convert to character indices,
+                // since terminal columns are in cells (chars), not bytes.
+                let mut start_byte = 0;
+                while let Some(pos) = search_text[start_byte..].find(&query) {
+                    let match_start_byte = start_byte + pos;
+                    let match_end_byte = match_start_byte + query.len();
+
+                    let start_col = search_text[..match_start_byte].chars().count();
+                    let end_col = search_text[..match_end_byte].chars().count();
+
+                    self.matches.push(SearchMatch {
+                        row: row_idx,
+                        start_col,
+                        end_col,
+                    });
+
+                    // Advance by one character to allow overlapping matches.
+                    let advance = search_text[match_start_byte..]
+                        .chars()
+                        .next()
+                        .map(|ch| ch.len_utf8())
+                        .unwrap_or(1);
+                    start_byte = (match_start_byte + advance).min(search_text.len());
+                }
+            }
         }
     }
 

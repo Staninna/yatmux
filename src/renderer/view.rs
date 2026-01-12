@@ -34,6 +34,7 @@ pub struct TerminalView {
     last_search_query: String,
     last_search_terminal_generation: u64,
     last_search_case_sensitive: bool,
+    last_search_regex_mode: bool,
 }
 
 impl Default for TerminalView {
@@ -57,6 +58,7 @@ impl TerminalView {
             last_search_query: String::new(),
             last_search_terminal_generation: 0,
             last_search_case_sensitive: false,
+            last_search_regex_mode: false,
         }
     }
 
@@ -119,16 +121,19 @@ impl TerminalView {
         if self.search.is_active() {
             let query = self.search.query().to_string();
             let case_sensitive = self.search.is_case_sensitive();
+            let regex_mode = self.search.mode() == crate::core::search::SearchMode::Regex;
 
             if query != self.last_search_query
                 || terminal_generation != self.last_search_terminal_generation
                 || case_sensitive != self.last_search_case_sensitive
+                || regex_mode != self.last_search_regex_mode
             {
                 let all_rows = terminal.rows_in_range(0, buffer_len, cols);
                 self.search.update_matches(&all_rows);
                 self.last_search_query = query;
                 self.last_search_terminal_generation = terminal_generation;
                 self.last_search_case_sensitive = case_sensitive;
+                self.last_search_regex_mode = regex_mode;
             }
         }
 
@@ -377,6 +382,18 @@ impl TerminalView {
 
     pub fn is_search_case_sensitive(&self) -> bool {
         self.search.is_case_sensitive()
+    }
+
+    pub fn search_toggle_regex(&mut self) {
+        self.search.toggle_mode();
+    }
+
+    pub fn is_search_regex(&self) -> bool {
+        self.search.mode() == crate::core::search::SearchMode::Regex
+    }
+
+    pub fn is_search_regex_valid(&self) -> bool {
+        self.search.is_regex_valid()
     }
 }
 

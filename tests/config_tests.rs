@@ -181,3 +181,50 @@ fn test_search_arrow_keybinds() {
         Some(Action::SearchPrev)
     );
 }
+
+#[test]
+fn test_keybind_disable_with_null() {
+    let toml = r#"
+[keybinds]
+"ctrl+shift+-" = "none"
+"ctrl+shift+c" = "copy"
+"#;
+
+    let config: Config = toml::from_str(toml).unwrap();
+
+    // Disabled bindings should return None
+    assert_eq!(config.keybinds.get_action("-", true, true, false), None);
+
+    // Enabled binding should still work
+    assert_eq!(
+        config.keybinds.get_action("c", true, true, false),
+        Some(Action::Copy)
+    );
+
+    // Check is_disabled helper
+    assert!(config.keybinds.is_disabled("-", true, true, false));
+    assert!(!config.keybinds.is_disabled("c", true, true, false));
+}
+
+#[test]
+fn test_keybind_disable_overrides_default() {
+    // Default config has split_horizontal bound to ctrl+shift+-
+    let default_config = KeybindConfig::default();
+    assert_eq!(
+        default_config.get_action("-", true, true, false),
+        Some(Action::SplitHorizontal)
+    );
+
+    // User config with "none" should disable it
+    let toml = r#"
+[keybinds]
+"ctrl+shift+-" = "none"
+"#;
+
+    let mut config: Config = toml::from_str(toml).unwrap();
+    config.keybinds.apply_defaults();
+
+    // Should still be disabled even after applying defaults
+    assert_eq!(config.keybinds.get_action("-", true, true, false), None);
+    assert!(config.keybinds.is_disabled("-", true, true, false));
+}

@@ -5,8 +5,8 @@ pub mod graphics;
 pub mod input;
 pub mod layout;
 pub mod pane;
+pub mod tab;
 
-use std::collections::HashMap;
 use std::io::Read;
 use std::thread;
 
@@ -14,7 +14,6 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
-
 use winit::window::WindowId;
 
 use term::clipboard::{ClipboardProvider, SystemClipboard};
@@ -25,16 +24,21 @@ use term::renderer::Renderer;
 
 use graphics::GraphicsState;
 use input::{InputState, apply_search_input, key_event_to_string};
-use layout::{Divider, LayoutNode, PaneId, Rect};
+use layout::{PaneId, Rect};
 use pane::Pane;
+use tab::{Tab, TabId};
 
 /// Custom events for the application.
 #[derive(Debug)]
 pub enum AppEvent {
     /// PTY has produced output bytes.
-    PtyOutput { pane: PaneId, bytes: Vec<u8> },
+    PtyOutput {
+        tab: TabId,
+        pane: PaneId,
+        bytes: Vec<u8>,
+    },
     /// PTY has closed (shell exited).
-    PtyExited { pane: PaneId },
+    PtyExited { tab: TabId, pane: PaneId },
 }
 
 /// Trait for opening URLs.
@@ -54,11 +58,13 @@ impl UrlOpener for SystemUrlOpener {
 /// Main application state.
 pub struct App {
     pub config: Config,
-    pub panes: HashMap<PaneId, Pane>,
-    pub layout: LayoutNode,
-    pub focused_pane: PaneId,
-    pub focus_history: Vec<PaneId>,
-    pub next_pane_id: PaneId,
+
+    // Tab management
+    pub tabs: Vec<Tab>,
+    pub active_tab: usize,
+    pub next_tab_id: TabId,
+
+    // Global state
     pub layout_dirty: bool,
     pub last_buffer_size: (u32, u32),
 
@@ -79,11 +85,9 @@ impl App {
     pub fn new(config: Config) -> Self {
         App {
             config,
-            panes: HashMap::new(),
-            layout: LayoutNode::Leaf(1),
-            focused_pane: 1,
-            focus_history: vec![1],
-            next_pane_id: 2,
+            tabs: Vec::new(),
+            active_tab: 0,
+            next_tab_id: 1,
             layout_dirty: true,
             last_buffer_size: (0, 0),
 
@@ -105,22 +109,57 @@ impl App {
         self.event_proxy = Some(proxy);
     }
 
-    /// Computes pane rectangles and dividers for the current layout.
+    /// Returns a reference to the active tab.
+    pub fn active_tab(&self) -> Option<&Tab> {
+        self.tabs.get(self.active_tab)
+    }
+
+    /// Returns a mutable reference to the active tab.
+    pub fn active_tab_mut(&mut self) -> Option<&mut Tab> {
+        self.tabs.get_mut(self.active_tab)
+    }
+
+    /// Returns the active tab's focused pane ID, if any.
+    #[allow(dead_code)]
+    pub fn focused_pane_id(&self) -> Option<PaneId> {
+        self.active_tab().map(|t| t.focused_pane)
+    }
+
+    /// Returns a mutable reference to the focused pane in the active tab.
+    pub fn focused_pane_mut(&mut self) -> Option<&mut Pane> {
+        self.active_tab_mut().and_then(|t| t.focused_pane_mut())
+    }
+
+    /// Computes pane rectangles for the active tab.
     pub fn pane_rects(
         &self,
         buffer_width: usize,
         buffer_height: usize,
-    ) -> (Vec<(PaneId, Rect)>, Vec<Divider>) {
-        let mut out = Vec::new();
-        let mut dividers = Vec::new();
-        let root = Rect {
-            x: 0,
-            y: 0,
-            w: buffer_width,
-            h: buffer_height,
-        };
-        self.layout.leaf_rects(root, &mut out, &mut dividers);
-        (out, dividers)
+    ) -> (Vec<(PaneId, Rect)>, Vec<layout::Divider>) {
+        // Reserve space for tab bar when there are multiple tabs
+        let tab_bar_height = self.tab_bar_height();
+        let pane_height = buffer_height.saturating_sub(tab_bar_height);
+
+        if let Some(tab) = self.active_tab() {
+            let (mut rects, dividers) = tab.pane_rects(buffer_width, pane_height);
+            // Offset all rects by the tab bar height
+            for (_, rect) in &mut rects {
+                rect.y += tab_bar_height;
+            }
+            (rects, dividers)
+        } else {
+            (Vec::new(), Vec::new())
+        }
+    }
+
+    /// Returns the height of the tab bar in pixels.
+    pub fn tab_bar_height(&self) -> usize {
+        if self.tabs.len() > 1 {
+            let scale = self.config.font.scale.clamp(1, 8);
+            8 * scale + 4 // cell height + padding
+        } else {
+            0
+        }
     }
 
     /// Finds the pane at the given position.
@@ -135,12 +174,89 @@ impl App {
             .copied()
     }
 
-    /// Initializes the first pane if none exist.
-    fn initialize_first_pane(&mut self) {
-        if !self.panes.is_empty() {
+    /// Creates a new tab and returns its ID.
+    pub fn new_tab(&mut self) -> TabId {
+        let id = self.next_tab_id;
+        self.next_tab_id += 1;
+
+        let mut tab = Tab::new(id);
+        tab.spawn_initial_pane(
+            self.config.font.scale,
+            self.config.terminal.scrollback_lines as usize,
+            self.event_proxy.as_ref(),
+        );
+
+        self.tabs.push(tab);
+        self.active_tab = self.tabs.len() - 1;
+        self.layout_dirty = true;
+        id
+    }
+
+    /// Closes the tab at the given index.
+    pub fn close_tab(&mut self, index: usize) {
+        if index >= self.tabs.len() {
             return;
         }
-        self.spawn_pane(1, self.config.font.scale);
+
+        self.tabs.remove(index);
+
+        if self.tabs.is_empty() {
+            self.should_exit = true;
+            return;
+        }
+
+        // Adjust active tab index
+        if self.active_tab >= self.tabs.len() {
+            self.active_tab = self.tabs.len() - 1;
+        }
+
+        self.layout_dirty = true;
+    }
+
+    /// Closes the active tab.
+    pub fn close_active_tab(&mut self) {
+        self.close_tab(self.active_tab);
+    }
+
+    /// Switches to the next tab.
+    pub fn next_tab(&mut self) {
+        if self.tabs.is_empty() {
+            return;
+        }
+        self.active_tab = (self.active_tab + 1) % self.tabs.len();
+        self.layout_dirty = true;
+        self.request_redraw();
+    }
+
+    /// Switches to the previous tab.
+    pub fn prev_tab(&mut self) {
+        if self.tabs.is_empty() {
+            return;
+        }
+        self.active_tab = if self.active_tab == 0 {
+            self.tabs.len() - 1
+        } else {
+            self.active_tab - 1
+        };
+        self.layout_dirty = true;
+        self.request_redraw();
+    }
+
+    /// Switches to the tab at the given index (0-indexed).
+    pub fn goto_tab(&mut self, index: usize) {
+        if index < self.tabs.len() {
+            self.active_tab = index;
+            self.layout_dirty = true;
+            self.request_redraw();
+        }
+    }
+
+    /// Initializes the first tab if none exist.
+    fn initialize_first_tab(&mut self) {
+        if !self.tabs.is_empty() {
+            return;
+        }
+        self.new_tab();
     }
 
     /// Localizes a position relative to a pane rectangle.
@@ -204,11 +320,24 @@ impl App {
             }
         }
 
-        // Pane actions are always handled, even while searching.
+        // Tab and pane actions are always handled, even while searching.
         if let Some(action) = non_search_action {
             if matches!(
                 action,
-                Action::SplitVertical
+                Action::NewTab
+                    | Action::CloseTab
+                    | Action::NextTab
+                    | Action::PrevTab
+                    | Action::Tab1
+                    | Action::Tab2
+                    | Action::Tab3
+                    | Action::Tab4
+                    | Action::Tab5
+                    | Action::Tab6
+                    | Action::Tab7
+                    | Action::Tab8
+                    | Action::Tab9
+                    | Action::SplitVertical
                     | Action::SplitHorizontal
                     | Action::FocusLeft
                     | Action::FocusRight
@@ -230,7 +359,10 @@ impl App {
         let mut action_to_execute: Option<Action> = None;
 
         {
-            let Some(pane) = self.panes.get_mut(&self.focused_pane) else {
+            let Some(tab) = self.active_tab_mut() else {
+                return;
+            };
+            let Some(pane) = tab.focused_pane_mut() else {
                 return;
             };
 
@@ -281,40 +413,80 @@ impl App {
             return;
         }
 
+        // Check if click is in tab bar
+        let tab_bar_height = self.tab_bar_height();
+        let cursor_pos = self.input.cursor_position;
+        if tab_bar_height > 0 && (cursor_pos.y as usize) < tab_bar_height {
+            if state == ElementState::Pressed {
+                self.handle_tab_bar_click();
+            }
+            return;
+        }
+
         let (rects, _divs) = self.pane_rects(buffer_width as usize, buffer_height as usize);
-        let Some((pane_id, pane_rect)) = self.pane_at_position(&rects, self.input.cursor_position)
-        else {
+        let Some((pane_id, pane_rect)) = self.pane_at_position(&rects, cursor_pos) else {
             return;
         };
 
-        self.set_focus(pane_id);
+        if let Some(tab) = self.active_tab_mut() {
+            tab.set_focus(pane_id);
+        }
 
-        let Some(pane) = self.panes.get_mut(&pane_id) else {
-            return;
-        };
-
-        let local = Self::localize_pos(pane_rect, self.input.cursor_position);
+        // Extract what we need before borrowing tab mutably
+        let local = Self::localize_pos(pane_rect, cursor_pos);
 
         match state {
             ElementState::Pressed => {
-                let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
-                if let Some((row, col)) = pane.view.window_to_cell(local.x, local.y, cell_w, cell_h)
-                {
-                    if let Some(url) = pane.view.url_at(row, col) {
-                        if let Err(e) = self.url_opener.open(&url) {
-                            eprintln!("Failed to open URL: {e}");
-                        }
+                // Get pane scale and check for URL
+                let (_scale, url_to_open, cell_coords) = {
+                    let Some(tab) = self.active_tab_mut() else {
                         return;
-                    }
+                    };
+                    let Some(pane) = tab.panes.get_mut(&pane_id) else {
+                        return;
+                    };
 
+                    let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
+                    let coords = pane.view.window_to_cell(local.x, local.y, cell_w, cell_h);
+                    let url = coords.and_then(|(row, col)| pane.view.url_at(row, col));
+                    (pane.scale, url, coords)
+                };
+
+                if let Some(url) = url_to_open {
+                    if let Err(e) = self.url_opener.open(&url) {
+                        eprintln!("Failed to open URL: {e}");
+                    }
+                    return;
+                }
+
+                if let Some((row, col)) = cell_coords {
                     self.input.mouse_selecting = true;
-                    pane.view.start_selection(row, col);
+                    if let Some(tab) = self.active_tab_mut() {
+                        if let Some(pane) = tab.panes.get_mut(&pane_id) {
+                            pane.view.start_selection(row, col);
+                        }
+                    }
                     self.request_redraw();
                 }
             }
             ElementState::Released => {
                 self.input.mouse_selecting = false;
             }
+        }
+    }
+
+    /// Handles clicking on the tab bar.
+    fn handle_tab_bar_click(&mut self) {
+        let scale = self.config.font.scale.clamp(1, 8);
+        let cell_w = 8 * scale;
+        let tab_padding = 8;
+        let tab_width = cell_w * 8 + tab_padding * 2; // ~8 chars per tab + padding
+
+        let click_x = self.input.cursor_position.x as usize;
+        let tab_index = click_x / tab_width;
+
+        if tab_index < self.tabs.len() {
+            self.goto_tab(tab_index);
         }
     }
 
@@ -334,15 +506,21 @@ impl App {
             return;
         };
 
-        let Some(pane) = self.panes.get_mut(&pane_id) else {
+        let local = Self::localize_pos(pane_rect, position);
+        let mouse_selecting = self.input.mouse_selecting;
+
+        let Some(tab) = self.active_tab_mut() else {
             return;
         };
 
-        let local = Self::localize_pos(pane_rect, position);
+        let focused_pane = tab.focused_pane;
+        let Some(pane) = tab.panes.get_mut(&pane_id) else {
+            return;
+        };
 
         let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
 
-        if self.input.mouse_selecting && pane_id == self.focused_pane {
+        if mouse_selecting && pane_id == focused_pane {
             if let Some((row, col)) = pane.view.window_to_cell(local.x, local.y, cell_w, cell_h) {
                 pane.view.update_selection(row, col);
                 self.request_redraw();
@@ -368,8 +546,8 @@ impl App {
             MouseScrollDelta::PixelDelta(pos) => {
                 // Use the focused pane's cell height as a reasonable heuristic.
                 let cell_h = self
-                    .panes
-                    .get(&self.focused_pane)
+                    .active_tab()
+                    .and_then(|t| t.focused_pane())
                     .map(|p| Self::cell_size_for_scale(p.scale).1)
                     .unwrap_or(CELL_H);
                 (pos.y / cell_h as f64).round() as isize
@@ -392,16 +570,24 @@ impl App {
         }
 
         let (buffer_width, buffer_height) = self.last_buffer_size;
-        let target = if buffer_width > 0 && buffer_height > 0 {
-            let (rects, _divs) = self.pane_rects(buffer_width as usize, buffer_height as usize);
-            self.pane_at_position(&rects, self.input.cursor_position)
-                .map(|(id, _)| id)
-                .unwrap_or(self.focused_pane)
-        } else {
-            self.focused_pane
+        let cursor_pos = self.input.cursor_position;
+
+        let Some(tab) = self.active_tab_mut() else {
+            return;
         };
 
-        if let Some(pane) = self.panes.get_mut(&target) {
+        let target = if buffer_width > 0 && buffer_height > 0 {
+            let (rects, _divs) = tab.pane_rects(buffer_width as usize, buffer_height as usize);
+            rects
+                .iter()
+                .find(|(_, r)| r.contains(cursor_pos.x, cursor_pos.y))
+                .map(|(id, _)| *id)
+                .unwrap_or(tab.focused_pane)
+        } else {
+            tab.focused_pane
+        };
+
+        if let Some(pane) = tab.panes.get_mut(&target) {
             pane.view.scrollback_scroll_by(lines);
             self.request_redraw();
         }
@@ -410,7 +596,7 @@ impl App {
 
 impl ApplicationHandler<AppEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.initialize_first_pane();
+        self.initialize_first_tab();
 
         if self.graphics.is_none() {
             self.create_window(event_loop);
@@ -419,16 +605,35 @@ impl ApplicationHandler<AppEvent> for App {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
-            AppEvent::PtyOutput { pane, bytes } => {
-                if let Some(p) = self.panes.get(&pane) {
-                    p.terminal.process(&bytes);
+            AppEvent::PtyOutput { tab, pane, bytes } => {
+                // Find the tab and pane
+                if let Some(t) = self.tabs.iter().find(|t| t.id == tab) {
+                    if let Some(p) = t.panes.get(&pane) {
+                        p.terminal.process(&bytes);
+                    }
                 }
                 self.request_redraw();
             }
-            AppEvent::PtyExited { pane } => {
-                if self.panes.contains_key(&pane) {
-                    self.close_pane(pane);
+            AppEvent::PtyExited { tab, pane } => {
+                // Find the tab index
+                if let Some(tab_idx) = self.tabs.iter().position(|t| t.id == tab) {
+                    let should_close_tab = {
+                        let t = &mut self.tabs[tab_idx];
+                        if t.panes.contains_key(&pane) {
+                            t.close_pane(pane)
+                        } else {
+                            false
+                        }
+                    };
+
+                    if should_close_tab {
+                        self.close_tab(tab_idx);
+                    }
+
+                    self.layout_dirty = true;
+                    self.request_redraw();
                 }
+
                 if self.should_exit {
                     event_loop.exit();
                 }
@@ -488,6 +693,7 @@ impl ApplicationHandler<AppEvent> for App {
 pub fn spawn_pty_reader(
     mut reader: Box<dyn Read + Send>,
     proxy: EventLoopProxy<AppEvent>,
+    tab: TabId,
     pane: PaneId,
 ) {
     thread::spawn(move || {
@@ -500,11 +706,12 @@ pub fn spawn_pty_reader(
             };
 
             let _ = proxy.send_event(AppEvent::PtyOutput {
+                tab,
                 pane,
                 bytes: buf[..n].to_vec(),
             });
         }
 
-        let _ = proxy.send_event(AppEvent::PtyExited { pane });
+        let _ = proxy.send_event(AppEvent::PtyExited { tab, pane });
     });
 }

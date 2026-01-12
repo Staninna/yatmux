@@ -3,13 +3,49 @@
 use serde::{Deserialize, Serialize};
 
 /// Terminal actions that can be bound to keys.
+///
+/// Use `none` to disable a keybinding:
+/// ```toml
+/// [keybinds]
+/// "ctrl+shift+-" = "none"  # Disable horizontal split
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    /// Disabled action - used to unbind a key.
+    None,
+
     /// Copy selected text to clipboard.
     Copy,
     /// Paste from clipboard.
     Paste,
+
+    /// Create a new tab.
+    NewTab,
+    /// Close the current tab.
+    CloseTab,
+    /// Switch to the next tab.
+    NextTab,
+    /// Switch to the previous tab.
+    PrevTab,
+    /// Switch to tab 1.
+    Tab1,
+    /// Switch to tab 2.
+    Tab2,
+    /// Switch to tab 3.
+    Tab3,
+    /// Switch to tab 4.
+    Tab4,
+    /// Switch to tab 5.
+    Tab5,
+    /// Switch to tab 6.
+    Tab6,
+    /// Switch to tab 7.
+    Tab7,
+    /// Switch to tab 8.
+    Tab8,
+    /// Switch to tab 9.
+    Tab9,
 
     /// Split the focused pane vertically.
     SplitVertical,
@@ -71,6 +107,8 @@ pub enum Action {
     SearchPrev,
     /// Toggle search case sensitivity.
     SearchToggleCase,
+    /// Toggle regex search mode.
+    SearchToggleRegex,
     /// Confirm search / go to current match.
     SearchConfirm,
 }
@@ -84,6 +122,7 @@ impl Action {
                 | Action::SearchNext
                 | Action::SearchPrev
                 | Action::SearchToggleCase
+                | Action::SearchToggleRegex
                 | Action::SearchConfirm
         )
     }
@@ -91,7 +130,23 @@ impl Action {
     /// Returns the category name for this action.
     pub fn category(&self) -> &'static str {
         match self {
+            Action::None => "Disabled",
+
             Action::Copy | Action::Paste => "General",
+
+            Action::NewTab
+            | Action::CloseTab
+            | Action::NextTab
+            | Action::PrevTab
+            | Action::Tab1
+            | Action::Tab2
+            | Action::Tab3
+            | Action::Tab4
+            | Action::Tab5
+            | Action::Tab6
+            | Action::Tab7
+            | Action::Tab8
+            | Action::Tab9 => "Tabs",
 
             Action::SplitVertical
             | Action::SplitHorizontal
@@ -123,6 +178,7 @@ impl Action {
             | Action::SearchNext
             | Action::SearchPrev
             | Action::SearchToggleCase
+            | Action::SearchToggleRegex
             | Action::SearchConfirm => "Search",
         }
     }
@@ -130,8 +186,24 @@ impl Action {
     /// Returns the human-readable label for this action.
     pub fn label(&self) -> &'static str {
         match self {
+            Action::None => "Disabled",
+
             Action::Copy => "Copy",
             Action::Paste => "Paste",
+
+            Action::NewTab => "New tab",
+            Action::CloseTab => "Close tab",
+            Action::NextTab => "Next tab",
+            Action::PrevTab => "Previous tab",
+            Action::Tab1 => "Go to tab 1",
+            Action::Tab2 => "Go to tab 2",
+            Action::Tab3 => "Go to tab 3",
+            Action::Tab4 => "Go to tab 4",
+            Action::Tab5 => "Go to tab 5",
+            Action::Tab6 => "Go to tab 6",
+            Action::Tab7 => "Go to tab 7",
+            Action::Tab8 => "Go to tab 8",
+            Action::Tab9 => "Go to tab 9",
 
             Action::SplitVertical => "Split vertical",
             Action::SplitHorizontal => "Split horizontal",
@@ -156,10 +228,11 @@ impl Action {
 
             Action::SearchFind => "Search",
             Action::SearchClose => "Close search",
-            Action::SearchNext => "Search next",
-            Action::SearchPrev => "Search prev",
-            Action::SearchToggleCase => "Toggle search case",
-            Action::SearchConfirm => "Search confirm",
+            Action::SearchNext => "Next match",
+            Action::SearchPrev => "Previous match",
+            Action::SearchToggleCase => "Toggle case",
+            Action::SearchToggleRegex => "Toggle regex",
+            Action::SearchConfirm => "Confirm",
 
             Action::ToggleHelp => "Toggle help",
 

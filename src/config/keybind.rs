@@ -53,6 +53,14 @@ impl Keybind {
 }
 
 /// Keybind configuration.
+///
+/// Bindings map key combinations to actions. Use `"none"` to disable a default binding:
+///
+/// ```toml
+/// [keybinds]
+/// "ctrl+shift+-" = "none"  # Disable horizontal split
+/// "ctrl+shift+\\" = "none"  # Disable vertical split
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KeybindConfig {
@@ -70,6 +78,21 @@ impl Default for KeybindConfig {
         bindings.insert("ctrl+shift+v".to_string(), Action::Paste);
         bindings.insert("ctrl+v".to_string(), Action::Paste);
         bindings.insert("shift+insert".to_string(), Action::Paste);
+
+        // Tab management
+        bindings.insert("ctrl+shift+t".to_string(), Action::NewTab);
+        bindings.insert("ctrl+shift+q".to_string(), Action::CloseTab);
+        bindings.insert("ctrl+tab".to_string(), Action::NextTab);
+        bindings.insert("ctrl+shift+tab".to_string(), Action::PrevTab);
+        bindings.insert("alt+1".to_string(), Action::Tab1);
+        bindings.insert("alt+2".to_string(), Action::Tab2);
+        bindings.insert("alt+3".to_string(), Action::Tab3);
+        bindings.insert("alt+4".to_string(), Action::Tab4);
+        bindings.insert("alt+5".to_string(), Action::Tab5);
+        bindings.insert("alt+6".to_string(), Action::Tab6);
+        bindings.insert("alt+7".to_string(), Action::Tab7);
+        bindings.insert("alt+8".to_string(), Action::Tab8);
+        bindings.insert("alt+9".to_string(), Action::Tab9);
 
         // Pane management
         bindings.insert("ctrl+shift+\\".to_string(), Action::SplitVertical);
@@ -105,6 +128,7 @@ impl Default for KeybindConfig {
         bindings.insert("ctrl+n".to_string(), Action::SearchNext);
         bindings.insert("ctrl+p".to_string(), Action::SearchPrev);
         bindings.insert("ctrl+c".to_string(), Action::SearchToggleCase);
+        bindings.insert("ctrl+r".to_string(), Action::SearchToggleRegex);
         bindings.insert("down".to_string(), Action::SearchNext);
         bindings.insert("up".to_string(), Action::SearchPrev);
 
@@ -115,8 +139,8 @@ impl Default for KeybindConfig {
 impl KeybindConfig {
     /// Merges any missing default bindings into this config.
     ///
-    /// This keeps user-overrides intact while ensuring new actions show up
-    /// in existing `config.toml` files.
+    /// This keeps user-overrides intact (including `"none"` to disable)
+    /// while ensuring new actions show up in existing `config.toml` files.
     pub fn apply_defaults(&mut self) {
         let defaults = KeybindConfig::default();
         for (key, action) in defaults.bindings {
@@ -125,14 +149,32 @@ impl KeybindConfig {
     }
 
     /// Finds the action for a given key and modifiers.
+    ///
+    /// Returns `None` if the key is not bound, or if explicitly disabled with `"none"`.
     pub fn get_action(&self, key: &str, ctrl: bool, shift: bool, alt: bool) -> Option<Action> {
         for (bind_str, action) in &self.bindings {
             if let Some(keybind) = Keybind::parse(bind_str) {
                 if keybind.matches(key, ctrl, shift, alt) {
+                    // Return None for Action::None (disabled), otherwise return the action
+                    if *action == Action::None {
+                        return None;
+                    }
                     return Some(*action);
                 }
             }
         }
         None
+    }
+
+    /// Checks if a keybind is explicitly disabled (set to "none").
+    pub fn is_disabled(&self, key: &str, ctrl: bool, shift: bool, alt: bool) -> bool {
+        for (bind_str, action) in &self.bindings {
+            if let Some(keybind) = Keybind::parse(bind_str) {
+                if keybind.matches(key, ctrl, shift, alt) {
+                    return *action == Action::None;
+                }
+            }
+        }
+        false
     }
 }

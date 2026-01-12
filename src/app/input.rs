@@ -193,6 +193,10 @@ pub fn apply_search_input(
                 view.search_toggle_case();
                 return true;
             }
+            Action::SearchToggleRegex => {
+                view.search_toggle_regex();
+                return true;
+            }
             _ => {}
         }
     }
