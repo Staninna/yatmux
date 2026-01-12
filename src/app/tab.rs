@@ -6,8 +6,8 @@ use std::collections::HashMap;
 
 use winit::event_loop::EventLoopProxy;
 
-use term::renderer::TerminalView;
-use term::terminal::Terminal;
+use yatmux::renderer::TerminalView;
+use yatmux::terminal::Terminal;
 
 use crate::app::layout::{LayoutNode, PaneId, Rect, SplitDir, overlap_1d};
 use crate::app::pane::Pane;
@@ -119,7 +119,7 @@ impl Tab {
         event_proxy: Option<&EventLoopProxy<AppEvent>>,
         tab_id: TabId,
     ) {
-        let (pty, reader) = match term::pty::spawn_shell() {
+        let (pty, reader) = match yatmux::pty::spawn_shell() {
             Ok(result) => result,
             Err(e) => {
                 eprintln!("Failed to spawn shell: {e}");
@@ -139,6 +139,11 @@ impl Tab {
                 terminal,
                 view: TerminalView::new(),
                 scale: scale.clamp(1, 8),
+                shell_title: None,
+                shell_cwd: None,
+                shell_integration: Default::default(),
+                shadow_prompt: Default::default(),
+                command_running: false,
             },
         );
     }
