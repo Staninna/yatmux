@@ -109,6 +109,17 @@ pub fn create_palette() -> [u32; 256] {
     palette
 }
 
+/// Creates a standard 256-color palette, optionally overriding ANSI 0-15.
+pub fn create_palette_with_ansi(ansi: Option<[u32; 16]>) -> [u32; 256] {
+    let mut palette = create_palette();
+    if let Some(ansi) = ansi {
+        for (i, c) in ansi.iter().enumerate() {
+            palette[i] = *c;
+        }
+    }
+    palette
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -118,6 +118,12 @@ pub enum Action {
     JumpToPrevPrompt,
     /// Jump to the next prompt in scrollback (requires shell integration).
     JumpToNextPrompt,
+
+    /// Toggle shadow prompt for the focused pane.
+    ToggleShadowPrompt,
+
+    /// Reload `config.toml` from disk.
+    ReloadConfig,
 }
 
 impl Action {
@@ -188,9 +194,12 @@ impl Action {
             | Action::SearchToggleRegex
             | Action::SearchConfirm => "Search",
 
-            Action::CopyLastOutput | Action::JumpToPrevPrompt | Action::JumpToNextPrompt => {
-                "Shell Integration"
-            }
+            Action::CopyLastOutput
+            | Action::JumpToPrevPrompt
+            | Action::JumpToNextPrompt
+            | Action::ToggleShadowPrompt => "Shell Integration",
+
+            Action::ReloadConfig => "Config",
         }
     }
 
@@ -254,6 +263,8 @@ impl Action {
             Action::CopyLastOutput => "Copy last output",
             Action::JumpToPrevPrompt => "Previous prompt",
             Action::JumpToNextPrompt => "Next prompt",
+            Action::ToggleShadowPrompt => "Toggle shadow prompt",
+            Action::ReloadConfig => "Reload config",
         }
     }
 }

@@ -120,6 +120,8 @@ pub struct Pane {
 
     /// Shadow prompt for type-ahead during command execution.
     pub shadow_prompt: ShadowPrompt,
+    /// Whether shadow prompt is enabled for this pane.
+    pub shadow_prompt_enabled: bool,
     /// Cached state: whether a command is currently running (updated on PTY output only).
     pub command_running: bool,
 }

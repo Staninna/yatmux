@@ -140,7 +140,8 @@ impl TerminalView {
         // Detect URLs and hex color codes in each visible row.
         for (row_idx, row_data) in display_rows.iter().enumerate() {
             let text: String = row_data.cells.iter().map(|(ch, _, _)| ch).collect();
-            self.urls.update_row(row_idx, &text);
+            self.urls
+                .update_row_with_hyperlinks(row_idx, &text, &row_data.hyperlinks);
             self.color_codes.update_row(row_idx, &text);
         }
 
@@ -166,22 +167,16 @@ impl TerminalView {
 
     fn scroll_to_row(&mut self, row: usize) {
         let buffer_len = self.last_buffer_len;
-        if self.view_rows == 0 {
+        if self.view_rows == 0 || buffer_len == 0 {
             self.scroll_offset = 0;
             return;
         }
 
-        let window_start = buffer_len.saturating_sub(self.view_rows + self.scroll_offset);
-        let window_end = window_start + self.view_rows;
+        let max_start = buffer_len.saturating_sub(self.view_rows);
+        let desired_start = row.saturating_sub(self.view_rows / 2);
+        let window_start = desired_start.min(max_start);
 
-        if row < window_start {
-            let desired_start = row;
-            self.scroll_offset = buffer_len.saturating_sub(self.view_rows + desired_start);
-        } else if row >= window_end {
-            let desired_start = row + 1 - self.view_rows;
-            self.scroll_offset = buffer_len.saturating_sub(self.view_rows + desired_start);
-        }
-
+        self.scroll_offset = buffer_len.saturating_sub(self.view_rows + window_start);
         self.scroll_offset = self.scroll_offset.min(self.max_scroll_offset());
     }
 
@@ -308,6 +303,14 @@ impl TerminalView {
 
     pub fn clear_selection(&mut self) {
         self.selection.clear();
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.selection.has_selection()
+    }
+
+    pub fn select_all(&mut self) {
+        self.selection.select_all();
     }
 
     // =========================================================================

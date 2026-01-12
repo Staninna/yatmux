@@ -181,6 +181,26 @@ impl SelectionManager {
         self.selection = None;
     }
 
+    /// Returns true if there is an active selection.
+    pub fn has_selection(&self) -> bool {
+        self.selection.is_some()
+    }
+
+    /// Selects all text in the buffer.
+    pub fn select_all(&mut self) {
+        if self.buffer_len == 0 || self.view_cols == 0 {
+            return;
+        }
+        let start = CellPos { row: 0, col: 0 };
+        let end = CellPos {
+            row: self.buffer_len.saturating_sub(1),
+            col: self.view_cols.saturating_sub(1),
+        };
+        let mut sel = Selection::new(start);
+        sel.update_end(end);
+        self.selection = Some(sel);
+    }
+
     /// Checks if a screen cell is currently selected.
     pub fn is_selected(&self, screen_row: usize, col: usize) -> bool {
         let Some(sel) = self.selection else {

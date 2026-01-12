@@ -22,6 +22,9 @@ use tattoy_wezterm_term::{
     Alert, AlertHandler, Terminal as WezTerminal, TerminalConfiguration, TerminalSize,
 };
 
+// Re-export mouse types for use by the app
+pub use tattoy_wezterm_term::{KeyModifiers, MouseButton, MouseEventKind};
+
 #[derive(Debug)]
 struct TermConfig {
     scrollback: usize,
@@ -190,6 +193,55 @@ impl Terminal {
     /// Writes bytes to the terminal PTY.
     pub fn write(&self, bytes: &[u8]) {
         self.pty.write(bytes);
+    }
+
+    /// Returns true if the terminal application wants to receive mouse events.
+    pub fn is_mouse_grabbed(&self) -> bool {
+        if let Ok(term) = self.term.lock() {
+            term.is_mouse_grabbed()
+        } else {
+            false
+        }
+    }
+
+    /// Returns true if an application is using the alternate screen.
+    ///
+    /// Full-screen TUI apps (htop, vim, less) typically activate this.
+    pub fn is_alt_screen_active(&self) -> bool {
+        if let Ok(term) = self.term.lock() {
+            term.is_alt_screen_active()
+        } else {
+            false
+        }
+    }
+
+    /// Sends a mouse event to the terminal.
+    /// Returns true if the event was handled by the terminal application.
+    pub fn mouse_event(
+        &self,
+        x: usize,
+        y: usize,
+        button: MouseButton,
+        kind: MouseEventKind,
+        modifiers: KeyModifiers,
+    ) -> bool {
+        if let Ok(mut term) = self.term.lock() {
+            if !term.is_mouse_grabbed() {
+                return false;
+            }
+            let event = tattoy_wezterm_term::MouseEvent {
+                kind,
+                button,
+                modifiers,
+                x,
+                y: y as i64,
+                x_pixel_offset: 0,
+                y_pixel_offset: 0,
+            };
+            term.mouse_event(event).is_ok()
+        } else {
+            false
+        }
     }
 
     /// Resizes the terminal to fit the given pixel dimensions.
@@ -602,6 +654,7 @@ impl Terminal {
         screen.with_phys_lines(start..end, |lines| {
             for line in lines {
                 let mut cells = Vec::with_capacity(cols);
+                let mut hyperlinks = Vec::with_capacity(cols);
 
                 for col in 0..cols {
                     if let Some(cell) = line.get_cell(col) {
@@ -611,13 +664,18 @@ impl Terminal {
                         let fg = color_attr_to_vt100(attrs.foreground());
                         let bg = color_attr_to_vt100(attrs.background());
                         cells.push((ch, fg, bg));
+
+                        // Extract OSC 8 hyperlink if present
+                        let link = attrs.hyperlink().map(|h| h.uri().to_string());
+                        hyperlinks.push(link);
                     } else {
                         cells.push((' ', Color::Default, Color::Default));
+                        hyperlinks.push(None);
                     }
                 }
 
                 let tabs = vec![None; cols];
-                out.push(RowSnapshot::new(cells, tabs));
+                out.push(RowSnapshot::with_hyperlinks(cells, tabs, hyperlinks));
             }
         });
 

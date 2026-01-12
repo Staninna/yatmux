@@ -91,10 +91,58 @@ impl UrlManager {
     }
 
     /// Updates URLs for a specific row.
+    /// Combines regex-detected URLs with OSC 8 hyperlinks (hyperlinks take priority).
     pub fn update_row(&mut self, row: usize, text: &str) {
-        if row < self.urls.len() {
-            self.urls[row] = detect_urls(text);
+        self.update_row_with_hyperlinks(row, text, &[]);
+    }
+
+    /// Updates URLs for a specific row, including OSC 8 hyperlinks.
+    /// OSC 8 hyperlinks take priority over regex-detected URLs.
+    pub fn update_row_with_hyperlinks(
+        &mut self,
+        row: usize,
+        text: &str,
+        hyperlinks: &[Option<String>],
+    ) {
+        if row >= self.urls.len() {
+            return;
         }
+
+        // First, collect OSC 8 hyperlink spans
+        let mut osc8_spans: Vec<UrlSpan> = Vec::new();
+        let mut i = 0;
+        while i < hyperlinks.len() {
+            if let Some(ref url) = hyperlinks[i] {
+                let start = i;
+                // Find the end of this hyperlink span
+                while i < hyperlinks.len() && hyperlinks[i].as_ref() == Some(url) {
+                    i += 1;
+                }
+                osc8_spans.push(UrlSpan::new(start, i, url.clone()));
+            } else {
+                i += 1;
+            }
+        }
+
+        // Get regex-detected URLs
+        let regex_spans = detect_urls(text);
+
+        // Merge: OSC 8 hyperlinks take priority
+        // Filter out regex spans that overlap with OSC 8 spans
+        let mut merged: Vec<UrlSpan> = osc8_spans.clone();
+        for regex_span in regex_spans {
+            let overlaps = osc8_spans.iter().any(|osc| {
+                !(regex_span.end_col <= osc.start_col || regex_span.start_col >= osc.end_col)
+            });
+            if !overlaps {
+                merged.push(regex_span);
+            }
+        }
+
+        // Sort by start column
+        merged.sort_by_key(|s| s.start_col);
+
+        self.urls[row] = merged;
     }
 
     /// Updates the hover state based on cursor position.

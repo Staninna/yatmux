@@ -85,6 +85,38 @@ pub struct App {
 
     /// Toast message state (message, show time)
     toast: Option<(String, Instant)>,
+
+    /// Context menu state (items, position, selected index)
+    context_menu: Option<ContextMenu>,
+}
+
+/// Context menu state.
+#[derive(Clone)]
+pub struct ContextMenu {
+    /// Menu items (label, action identifier)
+    pub items: Vec<(&'static str, ContextMenuAction)>,
+    /// Screen position where menu was opened
+    pub x: usize,
+    pub y: usize,
+    /// Currently hovered item index
+    pub hovered: Option<usize>,
+}
+
+/// Actions that can be triggered from the context menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContextMenuAction {
+    Copy,
+    Paste,
+    SelectAll,
+    Search,
+    OpenUrl,
+    ClearScrollback,
+    Reset,
+    ScrollToTop,
+    ScrollToBottom,
+    CopyLastOutput,
+    JumpToPrevPrompt,
+    JumpToNextPrompt,
 }
 
 impl App {
@@ -110,6 +142,7 @@ impl App {
             should_exit: false,
             last_window_title: None,
             toast: None,
+            context_menu: None,
         }
     }
 
@@ -148,14 +181,34 @@ impl App {
     /// Returns the current toast message if it should still be visible.
     /// Toast duration is 1.5 seconds.
     pub fn current_toast(&self) -> Option<&str> {
-        const TOAST_DURATION_MS: u128 = 1500;
+        let duration_ms = self.config.ui.toast.duration_ms as u128;
         self.toast.as_ref().and_then(|(msg, time)| {
-            if time.elapsed().as_millis() < TOAST_DURATION_MS {
+            if time.elapsed().as_millis() < duration_ms {
                 Some(msg.as_str())
             } else {
                 None
             }
         })
+    }
+
+    fn reload_config(&mut self) {
+        self.config = Config::load();
+
+        // Update palette immediately for ANSI colors/themes.
+        if let Some(graphics) = &mut self.graphics {
+            graphics.palette = std::sync::Arc::new(yatmux::renderer::create_palette_with_ansi(
+                self.config.colors.palette,
+            ));
+        }
+
+        // Force window title re-sync with the new config.
+        self.last_window_title = None;
+        self.sync_window_title();
+
+        // Layout and rendering depend on config (padding, UI, etc.).
+        self.layout_dirty = true;
+        self.show_toast("Config reloaded");
+        self.request_redraw();
     }
 
     /// Computes pane rectangles for the active tab.
@@ -212,6 +265,9 @@ impl App {
             self.config.font.scale,
             self.config.terminal.scrollback_lines as usize,
             self.event_proxy.as_ref(),
+            self.config
+                .shell_integration
+                .shadow_prompt_enabled_by_default,
         );
 
         self.tabs.push(tab);
@@ -385,6 +441,8 @@ impl App {
                     | Action::CopyLastOutput
                     | Action::JumpToPrevPrompt
                     | Action::JumpToNextPrompt
+                    | Action::ToggleShadowPrompt
+                    | Action::ReloadConfig
             ) {
                 self.execute_action(action);
                 return;
@@ -412,13 +470,25 @@ impl App {
                 let is_enter = matches!(event.logical_key, Key::Named(NamedKey::Enter));
 
                 // Check if we should use shadow prompt (command is running - use cached state)
-                let is_command_running =
-                    shadow_mode != ShadowPromptMode::Off && pane.command_running;
+                // Never use shadow prompt in alt-screen apps (htop, vim, less).
+                let is_command_running = shadow_mode != ShadowPromptMode::Off
+                    && pane.shadow_prompt_enabled
+                    && pane.command_running
+                    && !pane.terminal.is_alt_screen_active();
 
                 if is_command_running {
-                    // Route input to shadow prompt instead of terminal
-                    needs_redraw |=
+                    // Route input to shadow prompt instead of terminal.
+                    // If a key isn't handled by the shadow prompt (eg. Ctrl+C), forward it to PTY.
+                    let handled =
                         Self::handle_shadow_prompt_input(pane, &event.logical_key, modifiers);
+                    needs_redraw |= handled;
+
+                    if !handled {
+                        if let Some(bytes) = key_to_pty_bytes(&event.logical_key, modifiers) {
+                            pane.terminal.write(&bytes);
+                            needs_redraw = true;
+                        }
+                    }
                 } else {
                     // Regular terminal input
                     if !ctrl && !alt {
@@ -427,9 +497,7 @@ impl App {
                                 if is_enter {
                                     pane.view.scrollback_snap_to_bottom();
                                     // Mark command as running when Enter is pressed
-                                    if shadow_mode != ShadowPromptMode::Off {
-                                        pane.command_running = true;
-                                    }
+                                    pane.command_running = true;
                                 }
                                 pane.terminal.write(text.as_bytes());
                                 needs_redraw = true;
@@ -442,9 +510,7 @@ impl App {
                             if is_enter {
                                 pane.view.scrollback_snap_to_bottom();
                                 // Mark command as running when Enter is pressed
-                                if shadow_mode != ShadowPromptMode::Off {
-                                    pane.command_running = true;
-                                }
+                                pane.command_running = true;
                             }
                             pane.terminal.write(&bytes);
                             needs_redraw = true;
@@ -532,7 +598,26 @@ impl App {
 
     /// Handles mouse button events.
     fn handle_mouse_button(&mut self, state: ElementState, button: MouseButton) {
-        if button != MouseButton::Left {
+        match button {
+            MouseButton::Left => self.handle_left_click(state),
+            MouseButton::Right => self.handle_right_click(state),
+            MouseButton::Middle => self.handle_middle_click(state),
+            _ => {}
+        }
+    }
+
+    /// Handles left mouse button events.
+    fn handle_left_click(&mut self, state: ElementState) {
+        // Close context menu on any left click
+        if self.context_menu.is_some() {
+            if state == ElementState::Pressed {
+                // Check if clicking on a menu item
+                if let Some(action) = self.context_menu_item_at_cursor() {
+                    self.execute_context_menu_action(action);
+                }
+                self.context_menu = None;
+                self.request_redraw();
+            }
             return;
         }
 
@@ -564,6 +649,40 @@ impl App {
         // Extract what we need before borrowing tab mutably
         let local = Self::localize_pos(pane_rect, cursor_pos);
 
+        // Check if terminal wants mouse events
+        let (is_mouse_grabbed, cell_coords, _scale) = {
+            let Some(tab) = self.active_tab() else {
+                return;
+            };
+            let Some(pane) = tab.panes.get(&pane_id) else {
+                return;
+            };
+            let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
+            let coords = pane.view.window_to_cell(local.x, local.y, cell_w, cell_h);
+            (pane.terminal.is_mouse_grabbed(), coords, pane.scale)
+        };
+
+        // If terminal application wants mouse events, forward them
+        if is_mouse_grabbed {
+            if let Some((row, col)) = cell_coords {
+                use yatmux::terminal::{
+                    KeyModifiers, MouseButton as TermMouseButton, MouseEventKind,
+                };
+                let kind = match state {
+                    ElementState::Pressed => MouseEventKind::Press,
+                    ElementState::Released => MouseEventKind::Release,
+                };
+                let modifiers = KeyModifiers::NONE; // TODO: track modifier keys
+                if let Some(tab) = self.active_tab() {
+                    if let Some(pane) = tab.panes.get(&pane_id) {
+                        pane.terminal
+                            .mouse_event(col, row, TermMouseButton::Left, kind, modifiers);
+                    }
+                }
+            }
+            return;
+        }
+
         match state {
             ElementState::Pressed => {
                 // Get pane scale and check for URL
@@ -589,6 +708,12 @@ impl App {
                 }
 
                 if let Some((row, col)) = cell_coords {
+                    // Click-to-position cursor in shell input when semantic zones are available.
+                    if self.try_click_move_shell_cursor(pane_id, row, col) {
+                        self.request_redraw();
+                        return;
+                    }
+
                     self.input.mouse_selecting = true;
                     if let Some(tab) = self.active_tab_mut() {
                         if let Some(pane) = tab.panes.get_mut(&pane_id) {
@@ -619,6 +744,292 @@ impl App {
         }
     }
 
+    /// Handles right mouse button events (context menu).
+    fn handle_right_click(&mut self, state: ElementState) {
+        if state != ElementState::Pressed {
+            return;
+        }
+
+        // Close existing menu if clicking elsewhere
+        if self.context_menu.is_some() {
+            self.context_menu = None;
+            self.request_redraw();
+            return;
+        }
+
+        let cursor_pos = self.input.cursor_position;
+        let x = cursor_pos.x as usize;
+        let y = cursor_pos.y as usize;
+
+        // Build context menu items based on current state
+        let mut items: Vec<(&'static str, ContextMenuAction)> = Vec::new();
+
+        let focused_pane = self.active_tab().and_then(|t| t.focused_pane());
+
+        let has_selection = focused_pane
+            .map(|p| p.view.has_selection())
+            .unwrap_or(false);
+        let has_last_output = focused_pane
+            .and_then(|pane| pane.terminal.last_command_output())
+            .is_some();
+        let has_prompts = focused_pane
+            .map(|pane| !pane.terminal.prompt_positions().is_empty())
+            .unwrap_or(false);
+
+        // Check if there's a URL under cursor
+        let has_url = self.url_at_cursor().is_some();
+
+        if has_selection {
+            items.push(("Copy", ContextMenuAction::Copy));
+        }
+        items.push(("Paste", ContextMenuAction::Paste));
+        items.push(("Select All", ContextMenuAction::SelectAll));
+        items.push(("Search", ContextMenuAction::Search));
+        if has_url {
+            items.push(("Open URL", ContextMenuAction::OpenUrl));
+        }
+
+        items.push(("Scroll to Top", ContextMenuAction::ScrollToTop));
+        items.push(("Scroll to Bottom", ContextMenuAction::ScrollToBottom));
+        items.push(("Clear Scrollback", ContextMenuAction::ClearScrollback));
+        items.push(("Reset Terminal", ContextMenuAction::Reset));
+        if has_last_output {
+            items.push(("Copy Last Output", ContextMenuAction::CopyLastOutput));
+        }
+        if has_prompts {
+            items.push((
+                "Jump to Previous Prompt",
+                ContextMenuAction::JumpToPrevPrompt,
+            ));
+            items.push(("Jump to Next Prompt", ContextMenuAction::JumpToNextPrompt));
+        }
+
+        self.context_menu = Some(ContextMenu {
+            items,
+            x,
+            y,
+            hovered: Some(0),
+        });
+        self.request_redraw();
+    }
+
+    /// Handles middle mouse button events (paste).
+    fn handle_middle_click(&mut self, state: ElementState) {
+        if state != ElementState::Pressed {
+            return;
+        }
+
+        // Close context menu if open
+        if self.context_menu.is_some() {
+            self.context_menu = None;
+            self.request_redraw();
+            return;
+        }
+
+        // Paste from clipboard
+        self.handle_paste();
+    }
+
+    /// Returns the URL at the current cursor position, if any.
+    fn url_at_cursor(&self) -> Option<String> {
+        let (buffer_width, buffer_height) = self.last_buffer_size;
+        if buffer_width == 0 || buffer_height == 0 {
+            return None;
+        }
+
+        let cursor_pos = self.input.cursor_position;
+        let (rects, _) = self.pane_rects(buffer_width as usize, buffer_height as usize);
+        let (pane_id, pane_rect) = self.pane_at_position(&rects, cursor_pos)?;
+
+        let tab = self.active_tab()?;
+        let pane = tab.panes.get(&pane_id)?;
+
+        let local = Self::localize_pos(pane_rect, cursor_pos);
+        let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
+        let (row, col) = pane.view.window_to_cell(local.x, local.y, cell_w, cell_h)?;
+
+        pane.view.url_at(row, col)
+    }
+
+    /// Returns the context menu action at the current cursor position.
+    fn context_menu_item_at_cursor(&self) -> Option<ContextMenuAction> {
+        let menu = self.context_menu.as_ref()?;
+        let cursor_pos = self.input.cursor_position;
+
+        let scale = self.config.font.scale.clamp(1, 8);
+        let item_height = 8 * scale + 8; // cell height + padding
+        let menu_width = 12 * 8 * scale; // ~12 chars width
+
+        let x = cursor_pos.x as usize;
+        let y = cursor_pos.y as usize;
+
+        // Check if cursor is within menu bounds
+        if x < menu.x || x >= menu.x + menu_width {
+            return None;
+        }
+
+        if y < menu.y {
+            return None;
+        }
+
+        let relative_y = y - menu.y;
+        let item_index = relative_y / item_height;
+
+        menu.items.get(item_index).map(|(_, action)| *action)
+    }
+
+    /// Executes a context menu action.
+    fn execute_context_menu_action(&mut self, action: ContextMenuAction) {
+        match action {
+            ContextMenuAction::Copy => {
+                self.handle_copy();
+            }
+            ContextMenuAction::Paste => {
+                self.handle_paste();
+            }
+            ContextMenuAction::SelectAll => {
+                if let Some(tab) = self.active_tab_mut() {
+                    if let Some(pane) = tab.focused_pane_mut() {
+                        pane.view.select_all();
+                    }
+                }
+                self.request_redraw();
+            }
+            ContextMenuAction::Search => {
+                self.execute_action(Action::SearchFind);
+            }
+            ContextMenuAction::OpenUrl => {
+                if let Some(url) = self.url_at_cursor() {
+                    if let Err(e) = self.url_opener.open(&url) {
+                        eprintln!("Failed to open URL: {e}");
+                    }
+                }
+            }
+            ContextMenuAction::ScrollToTop => {
+                self.execute_action(Action::ScrollToTop);
+            }
+            ContextMenuAction::ScrollToBottom => {
+                self.execute_action(Action::ScrollToBottom);
+            }
+            ContextMenuAction::ClearScrollback => {
+                self.execute_action(Action::ClearScrollback);
+            }
+            ContextMenuAction::Reset => {
+                self.execute_action(Action::Reset);
+            }
+            ContextMenuAction::CopyLastOutput => {
+                self.execute_action(Action::CopyLastOutput);
+            }
+            ContextMenuAction::JumpToPrevPrompt => {
+                self.execute_action(Action::JumpToPrevPrompt);
+            }
+            ContextMenuAction::JumpToNextPrompt => {
+                self.execute_action(Action::JumpToNextPrompt);
+            }
+        }
+    }
+
+    /// Returns the current context menu if any.
+    pub fn context_menu(&self) -> Option<&ContextMenu> {
+        self.context_menu.as_ref()
+    }
+
+    /// Attempts to reposition the cursor within the current shell input.
+    ///
+    /// This relies on OSC 133 semantic zones (Prompt/Input) and works best for
+    /// single-line inputs where the click is on the cursor line.
+    fn try_click_move_shell_cursor(
+        &mut self,
+        pane_id: PaneId,
+        click_row: usize,
+        click_col: usize,
+    ) -> bool {
+        if !self.config.shell_integration.semantic_zones_from_osc133 {
+            return false;
+        }
+
+        let Some(tab) = self.active_tab() else {
+            return false;
+        };
+        let Some(pane) = tab.panes.get(&pane_id) else {
+            return false;
+        };
+
+        // Don't fight running apps/commands.
+        if pane.command_running {
+            return false;
+        }
+
+        let ((cursor_row, cursor_col), _cursor_visible) = pane.terminal.cursor();
+        let cursor_row = cursor_row as usize;
+        let cursor_col = cursor_col as usize;
+
+        // For now, only support click-to-move on the cursor row.
+        if click_row != cursor_row {
+            return false;
+        }
+
+        let visible_start = pane.terminal.visible_start_row();
+        let cursor_phys_y = visible_start + cursor_row;
+        let click_phys_y = visible_start + click_row;
+
+        let zones = match pane.terminal.semantic_zones() {
+            Ok(z) => z,
+            Err(_) => return false,
+        };
+
+        let input_zone = zones.iter().rev().find(|z| {
+            z.semantic_type == tattoy_wezterm_term::SemanticType::Input
+                && cursor_phys_y >= z.start_y as usize
+                && cursor_phys_y <= z.end_y as usize
+        });
+        let Some(zone) = input_zone else {
+            return false;
+        };
+
+        let in_zone = |phys_y: usize, col: usize| -> bool {
+            let start_y = zone.start_y as usize;
+            let end_y = zone.end_y as usize;
+            if phys_y < start_y || phys_y > end_y {
+                return false;
+            }
+            if start_y == end_y {
+                return col >= zone.start_x && col < zone.end_x;
+            }
+            if phys_y == start_y {
+                return col >= zone.start_x;
+            }
+            if phys_y == end_y {
+                return col < zone.end_x;
+            }
+            true
+        };
+
+        if !in_zone(cursor_phys_y, cursor_col) {
+            return false;
+        }
+        if !in_zone(click_phys_y, click_col) {
+            return false;
+        }
+
+        let delta = click_col as isize - cursor_col as isize;
+        if delta == 0 {
+            return true;
+        }
+
+        let steps = delta
+            .unsigned_abs()
+            .min(self.config.interaction.click_move_max_steps);
+        let seq: &[u8] = if delta > 0 { b"\x1b[C" } else { b"\x1b[D" };
+
+        let mut bytes = Vec::with_capacity(steps * seq.len());
+        for _ in 0..steps {
+            bytes.extend_from_slice(seq);
+        }
+        pane.terminal.write(&bytes);
+        true
+    }
+
     /// Handles mouse movement.
     fn handle_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
         self.input.cursor_position = position;
@@ -626,6 +1037,26 @@ impl App {
         let (buffer_width, buffer_height) = self.last_buffer_size;
         if buffer_width == 0 || buffer_height == 0 {
             self.update_cursor();
+            return;
+        }
+
+        // Update context menu hover state if menu is open
+        if let Some(ref mut menu) = self.context_menu {
+            let scale = self.config.font.scale.clamp(1, 8);
+            let item_height = 8 * scale + 8;
+            let y = position.y as usize;
+            if y >= menu.y {
+                let relative_y = y - menu.y;
+                let item_index = relative_y / item_height;
+                if item_index < menu.items.len() {
+                    menu.hovered = Some(item_index);
+                } else {
+                    menu.hovered = None;
+                }
+            } else {
+                menu.hovered = None;
+            }
+            self.request_redraw();
             return;
         }
 
@@ -637,6 +1068,37 @@ impl App {
 
         let local = Self::localize_pos(pane_rect, position);
         let mouse_selecting = self.input.mouse_selecting;
+
+        // Check if terminal wants mouse events
+        let is_mouse_grabbed = self
+            .active_tab()
+            .and_then(|t| t.panes.get(&pane_id))
+            .map(|p| p.terminal.is_mouse_grabbed())
+            .unwrap_or(false);
+
+        if is_mouse_grabbed {
+            let Some(tab) = self.active_tab() else {
+                return;
+            };
+            let Some(pane) = tab.panes.get(&pane_id) else {
+                return;
+            };
+            let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
+            if let Some((row, col)) = pane.view.window_to_cell(local.x, local.y, cell_w, cell_h) {
+                use yatmux::terminal::{
+                    KeyModifiers, MouseButton as TermMouseButton, MouseEventKind,
+                };
+                let modifiers = KeyModifiers::NONE;
+                pane.terminal.mouse_event(
+                    col,
+                    row,
+                    TermMouseButton::None,
+                    MouseEventKind::Move,
+                    modifiers,
+                );
+            }
+            return;
+        }
 
         let Some(tab) = self.active_tab_mut() else {
             return;
@@ -717,7 +1179,28 @@ impl App {
         };
 
         if let Some(pane) = tab.panes.get_mut(&target) {
-            pane.view.scrollback_scroll_by(lines);
+            // Check if terminal wants mouse events (for scroll in apps like less, vim)
+            if pane.terminal.is_mouse_grabbed() {
+                use yatmux::terminal::{
+                    KeyModifiers, MouseButton as TermMouseButton, MouseEventKind,
+                };
+                let button = if lines > 0 {
+                    TermMouseButton::WheelUp(lines as usize)
+                } else {
+                    TermMouseButton::WheelDown((-lines) as usize)
+                };
+                let modifiers = KeyModifiers::NONE;
+                // Use current cursor position in cell coordinates
+                let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
+                let (row, col) = pane
+                    .view
+                    .window_to_cell(cursor_pos.x, cursor_pos.y, cell_w, cell_h)
+                    .unwrap_or((0, 0));
+                pane.terminal
+                    .mouse_event(col, row, button, MouseEventKind::Press, modifiers);
+            } else {
+                pane.view.scrollback_scroll_by(lines);
+            }
             self.request_redraw();
         }
     }
@@ -920,9 +1403,7 @@ impl ApplicationHandler<AppEvent> for App {
 
                 // Check for prompt marker in raw bytes BEFORE processing
                 // OSC 133;A marks prompt start - means command finished
-                let has_prompt_marker = bytes
-                    .windows(6)
-                    .any(|w| w == b"]133;A" || w == b"]133;B" || w == b"]133;D");
+                let has_prompt_marker = bytes.windows(6).any(|w| w == b"]133;A" || w == b"]133;B");
 
                 {
                     let t = &self.tabs[tab_idx];
@@ -931,9 +1412,10 @@ impl ApplicationHandler<AppEvent> for App {
                     }
                 }
 
-                // If we detected a prompt marker, flush shadow prompt
-                if has_prompt_marker {
-                    if let Some(pane_state) = self.tabs[tab_idx].panes.get_mut(&pane) {
+                // Update prompt state
+                if let Some(pane_state) = self.tabs[tab_idx].panes.get_mut(&pane) {
+                    // If we detected a prompt marker, flush shadow prompt
+                    if has_prompt_marker {
                         pane_state.command_running = false;
                         let buffered = pane_state.shadow_prompt.take();
                         if !buffered.is_empty() {

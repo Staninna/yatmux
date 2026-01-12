@@ -9,14 +9,14 @@ use anyhow::Result;
 use softbuffer::Surface;
 use vt100::Color;
 
-use crate::constants::{DEFAULT_BG_COLOR, DEFAULT_FG_COLOR, GLYPH_H, GLYPH_W};
+use crate::constants::{GLYPH_H, GLYPH_W};
 use crate::terminal::Terminal;
 
 use super::color::{color_to_u32, lighten_color};
 use super::font::{self, tab_indicator_glyph};
 use super::help;
 use super::view::TerminalView;
-use super::{HelpSection, RenderFrame, SEARCH_CURRENT_BG, SEARCH_MATCH_BG};
+use super::{HelpSection, RenderFrame, UiStyle};
 
 /// Compute a high-contrast foreground for a given background.
 fn contrast_color(bg: u32) -> u32 {
@@ -82,6 +82,7 @@ impl Renderer {
         terminal: &Terminal,
         palette: &Arc<[u32; 256]>,
         view: &mut TerminalView,
+        style: &UiStyle,
     ) -> Result<()> {
         let cell_w = cell_w.max(1);
         let cell_h = cell_h.max(1);
@@ -110,6 +111,7 @@ impl Renderer {
             &frame,
             palette,
             view,
+            style,
         );
 
         Ok(())
@@ -122,6 +124,7 @@ impl Renderer {
         palette: &Arc<[u32; 256]>,
         view: &mut TerminalView,
         font_scale: usize,
+        style: &UiStyle,
     ) -> Result<()> {
         let mut buffer = surface
             .buffer_mut()
@@ -129,7 +132,7 @@ impl Renderer {
 
         let buffer_width = buffer.width().get() as usize;
         let buffer_height = buffer.height().get() as usize;
-        buffer.fill(DEFAULT_BG_COLOR);
+        buffer.fill(style.base_bg);
 
         let font_scale = font_scale.clamp(1, 8);
         let cell_w = 8 * font_scale;
@@ -149,6 +152,7 @@ impl Renderer {
             terminal,
             palette,
             view,
+            style,
         )?;
 
         buffer
@@ -169,6 +173,7 @@ impl Renderer {
         accent_color: u32,
         font_scale: usize,
         shell_integration_detected: bool,
+        style: &UiStyle,
     ) -> (usize, usize) {
         help::paint_help_overlay(
             backbuffer,
@@ -180,6 +185,11 @@ impl Renderer {
             accent_color,
             font_scale,
             shell_integration_detected,
+            style.help_bg,
+            style.help_text,
+            style.help_footer_text,
+            style.help_padding_x_cells,
+            style.help_padding_y_cells,
         )
     }
 
@@ -200,6 +210,7 @@ impl Renderer {
         prompt_rows: &[crate::core::grid::RowSnapshot],
         cursor: Option<(usize, usize)>,
         palette: &[u32; 256],
+        style: &UiStyle,
     ) {
         if prompt_rows.is_empty() {
             return;
@@ -222,13 +233,13 @@ impl Renderer {
         if separator_y >= origin_y && separator_y < origin_y + region_h {
             for x in origin_x..(origin_x + region_w).min(buffer_width) {
                 if separator_y < buffer_height {
-                    backbuffer[separator_y * buffer_width + x] = 0x444444;
+                    backbuffer[separator_y * buffer_width + x] = style.sticky_prompt_separator;
                 }
             }
         }
 
         // Draw background
-        let sticky_bg = 0x1A1A1A;
+        let sticky_bg = style.sticky_prompt_bg;
         for y in sticky_area_y..(origin_y + region_h).min(buffer_height) {
             for x in origin_x..(origin_x + region_w).min(buffer_width) {
                 backbuffer[y * buffer_width + x] = sticky_bg;
@@ -249,7 +260,7 @@ impl Renderer {
                     .map(|(r, c)| r == row_idx && c == col)
                     .unwrap_or(false);
 
-                let fg = color_to_u32(fg_color, DEFAULT_FG_COLOR, palette);
+                let fg = color_to_u32(fg_color, style.base_fg, palette);
                 let bg = color_to_u32(bg_color, sticky_bg, palette);
 
                 let fill_color = if matches!(bg_color, Color::Default) {
@@ -314,6 +325,7 @@ impl Renderer {
         frame: &RenderFrame,
         palette: &[u32; 256],
         view: &TerminalView,
+        style: &UiStyle,
     ) {
         for (row_idx, row_data) in frame.display_rows.iter().enumerate().take(frame.rows) {
             for col in 0..frame.cols {
@@ -355,6 +367,7 @@ impl Renderer {
                     is_url_hovered,
                     hex_bg,
                     search_match,
+                    style,
                 );
             }
         }
@@ -372,6 +385,7 @@ impl Renderer {
                 cell_h,
                 font_scale,
                 view,
+                style,
             );
         }
     }
@@ -402,13 +416,14 @@ impl Renderer {
         is_url_hovered: bool,
         hex_bg: Option<u32>,
         search_match: Option<bool>,
+        style: &UiStyle,
     ) {
-        let fg = color_to_u32(fg_color, DEFAULT_FG_COLOR, palette);
-        let bg = color_to_u32(bg_color, DEFAULT_BG_COLOR, palette);
+        let fg = color_to_u32(fg_color, style.base_fg, palette);
+        let bg = color_to_u32(bg_color, style.base_bg, palette);
 
         let mut fill_color = match search_match {
-            Some(true) => SEARCH_CURRENT_BG,
-            Some(false) => SEARCH_MATCH_BG,
+            Some(true) => style.search_current_bg,
+            Some(false) => style.search_match_bg,
             None if selected || tab_info.is_some() => lighten_color(bg),
             None => bg,
         };
@@ -431,7 +446,7 @@ impl Renderer {
             (fg, fill_color)
         };
 
-        let fg = if is_url { 0x6699FF } else { fg };
+        let fg = if is_url { style.url_fg } else { fg };
 
         let x0 = origin_x + col * cell_w;
         let y0 = origin_y + row * cell_h;
@@ -541,17 +556,22 @@ impl Renderer {
         cell_h: usize,
         font_scale: usize,
         view: &TerminalView,
+        style: &UiStyle,
     ) {
         let bar_height = cell_h;
-        let bar_y = origin_y + region_h.saturating_sub(bar_height);
+        let bar_y = origin_y;
         let clip_right = (origin_x + region_w).min(width);
         let clip_bottom = (origin_y + region_h).min(height);
+        let bar_bottom = (bar_y + bar_height).min(clip_bottom);
 
-        let bar_bg = 0x333333;
-        let text_color = 0xFFFFFF;
-        let match_info_color = 0xAAAAAA;
+        let bar_bg = style.search_bar_bg;
+        let text_color = style.search_bar_text;
+        let match_info_color = style.search_bar_hint_text;
 
-        for y in bar_y.min(clip_bottom)..clip_bottom {
+        for y in bar_y..bar_bottom {
+            if y >= clip_bottom {
+                break;
+            }
             let row = y * width;
             for x in origin_x.min(width)..clip_right {
                 buffer[row + x] = bar_bg;
@@ -573,7 +593,7 @@ impl Renderer {
         }
 
         for ch in view.search.query().chars() {
-            if x_pos + cell_w > clip_right.saturating_sub(100) {
+            if x_pos + cell_w > clip_right.saturating_sub(style.search_right_reserved_px) {
                 break;
             }
             let glyph = font::get_glyph(ch);
@@ -585,7 +605,7 @@ impl Renderer {
         }
 
         let cursor_x = x_pos;
-        for y in bar_y.min(clip_bottom)..(bar_y + cell_h).min(clip_bottom) {
+        for y in bar_y..bar_bottom {
             if cursor_x < clip_right {
                 buffer[y * width + cursor_x] = text_color;
             }
@@ -618,7 +638,7 @@ impl Renderer {
 
         // Use red color for invalid regex
         let info_color = if !view.is_search_regex_valid() {
-            0xFF6666
+            style.search_invalid_regex_text
         } else {
             match_info_color
         };
@@ -648,6 +668,7 @@ impl Renderer {
         buffer_height: usize,
         message: &str,
         font_scale: usize,
+        style: &UiStyle,
     ) {
         let scale = font_scale.clamp(1, 8);
         let cell_w = GLYPH_W * scale;
@@ -662,12 +683,12 @@ impl Renderer {
 
         // Position: bottom-center, slightly above the bottom edge
         let toast_x = (buffer_width.saturating_sub(toast_width)) / 2;
-        let toast_y = buffer_height.saturating_sub(toast_height + cell_h * 2);
+        let toast_y =
+            buffer_height.saturating_sub(toast_height + cell_h * style.toast_bottom_margin_cells);
 
-        // Semi-transparent dark background
-        let bg_color = 0x2A2A2A;
-        let fg_color = 0xCCCCCC;
-        let border_color = 0x444444;
+        let bg_color = style.toast_bg;
+        let fg_color = style.toast_text;
+        let border_color = style.toast_border;
 
         // Draw background
         for y in toast_y..toast_y + toast_height {
@@ -731,6 +752,130 @@ impl Renderer {
         }
     }
 
+    /// Paints a context menu at the specified position.
+    pub fn paint_context_menu(
+        &self,
+        buffer: &mut [u32],
+        buffer_width: usize,
+        buffer_height: usize,
+        menu_x: usize,
+        menu_y: usize,
+        items: &[(&str, usize)], // (label, is_hovered as 1 or 0)
+        font_scale: usize,
+        style: &UiStyle,
+    ) {
+        if items.is_empty() {
+            return;
+        }
+
+        let scale = font_scale.clamp(1, 8);
+        let cell_w = GLYPH_W * scale;
+        let cell_h = GLYPH_H * scale;
+
+        let padding_x = cell_w;
+        let padding_y = cell_h / 4;
+        let item_height = cell_h + padding_y * 2;
+
+        // Find widest item
+        let max_label_len = items
+            .iter()
+            .map(|(label, _)| label.len())
+            .max()
+            .unwrap_or(8);
+        let menu_width = max_label_len * cell_w + padding_x * 2;
+        let menu_height = items.len() * item_height;
+
+        // Adjust position to keep menu on screen
+        let menu_x = menu_x.min(buffer_width.saturating_sub(menu_width));
+        let menu_y = menu_y.min(buffer_height.saturating_sub(menu_height));
+
+        let bg_color = style.context_menu_bg;
+        let hover_bg = style.context_menu_hover_bg;
+        let fg_color = style.context_menu_text;
+        let border_color = style.context_menu_border;
+
+        // Draw background
+        for y in menu_y..menu_y + menu_height {
+            if y >= buffer_height {
+                continue;
+            }
+            for x in menu_x..menu_x + menu_width {
+                if x >= buffer_width {
+                    continue;
+                }
+                buffer[y * buffer_width + x] = bg_color;
+            }
+        }
+
+        // Draw border
+        for x in menu_x..menu_x + menu_width {
+            if x < buffer_width {
+                if menu_y < buffer_height {
+                    buffer[menu_y * buffer_width + x] = border_color;
+                }
+                if menu_y + menu_height > 0 && menu_y + menu_height - 1 < buffer_height {
+                    buffer[(menu_y + menu_height - 1) * buffer_width + x] = border_color;
+                }
+            }
+        }
+        for y in menu_y..menu_y + menu_height {
+            if y < buffer_height {
+                if menu_x < buffer_width {
+                    buffer[y * buffer_width + menu_x] = border_color;
+                }
+                if menu_x + menu_width > 0 && menu_x + menu_width - 1 < buffer_width {
+                    buffer[y * buffer_width + menu_x + menu_width - 1] = border_color;
+                }
+            }
+        }
+
+        // Draw each menu item
+        for (i, (label, is_hovered)) in items.iter().enumerate() {
+            let item_y = menu_y + i * item_height;
+
+            // Draw hover highlight
+            if *is_hovered == 1 {
+                for y in item_y..item_y + item_height {
+                    if y >= buffer_height {
+                        continue;
+                    }
+                    for x in (menu_x + 1)..(menu_x + menu_width - 1) {
+                        if x >= buffer_width {
+                            continue;
+                        }
+                        buffer[y * buffer_width + x] = hover_bg;
+                    }
+                }
+            }
+
+            // Draw label
+            let text_x = menu_x + padding_x;
+            let text_y = item_y + padding_y;
+
+            for (j, ch) in label.chars().enumerate() {
+                let x = text_x + j * cell_w;
+                if x + cell_w > buffer_width {
+                    break;
+                }
+                let glyph = font::get_glyph(ch);
+                self.draw_glyph(
+                    buffer,
+                    buffer_width,
+                    buffer_height,
+                    0,
+                    0,
+                    buffer_width,
+                    buffer_height,
+                    font_scale,
+                    x,
+                    text_y,
+                    glyph,
+                    fg_color,
+                );
+            }
+        }
+    }
+
     /// Paints the shadow prompt at the bottom of the screen.
     /// Shows a prompt indicator (e.g. "$") and the buffered input with cursor.
     pub fn paint_shadow_prompt(
@@ -741,6 +886,7 @@ impl Renderer {
         input: &str,
         cursor_pos: usize,
         font_scale: usize,
+        style: &UiStyle,
     ) {
         let scale = font_scale.clamp(1, 8);
         let cell_w = GLYPH_W * scale;
@@ -788,12 +934,11 @@ impl Renderer {
         let prompt_x = padding_x;
         let prompt_y = buffer_height.saturating_sub(prompt_height + cell_h / 2);
 
-        // Semi-transparent dark background with slight blue tint
-        let bg_color = 0x1A2030;
-        let fg_color = 0xAABBCC;
-        let cursor_color = 0x88AAFF;
-        let prompt_color = 0x66AA66;
-        let border_color = 0x334455;
+        let bg_color = style.shadow_prompt_bg;
+        let fg_color = style.shadow_prompt_text;
+        let cursor_color = style.shadow_prompt_cursor;
+        let prompt_color = style.shadow_prompt_indicator;
+        let border_color = style.shadow_prompt_border;
 
         // Draw background
         for y in prompt_y..prompt_y + prompt_height {

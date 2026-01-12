@@ -118,6 +118,7 @@ impl Tab {
         scrollback_lines: usize,
         event_proxy: Option<&EventLoopProxy<AppEvent>>,
         tab_id: TabId,
+        shadow_prompt_enabled: bool,
     ) {
         let (pty, reader) = match yatmux::pty::spawn_shell() {
             Ok(result) => result,
@@ -143,6 +144,7 @@ impl Tab {
                 shell_cwd: None,
                 shell_integration: Default::default(),
                 shadow_prompt: Default::default(),
+                shadow_prompt_enabled,
                 command_running: false,
             },
         );
@@ -154,11 +156,19 @@ impl Tab {
         scale: usize,
         scrollback_lines: usize,
         event_proxy: Option<&EventLoopProxy<AppEvent>>,
+        shadow_prompt_enabled: bool,
     ) {
         if !self.panes.is_empty() {
             return;
         }
-        self.spawn_pane(1, scale, scrollback_lines, event_proxy, self.id);
+        self.spawn_pane(
+            1,
+            scale,
+            scrollback_lines,
+            event_proxy,
+            self.id,
+            shadow_prompt_enabled,
+        );
     }
 
     /// Splits the focused pane in the given direction.
@@ -171,6 +181,7 @@ impl Tab {
         event_proxy: Option<&EventLoopProxy<AppEvent>>,
         current_rect: Option<Rect>,
         min_pane_size: usize,
+        shadow_prompt_enabled: bool,
     ) -> bool {
         let focused = self.focused_pane;
         if !self.layout.contains_pane(focused) {
@@ -202,6 +213,7 @@ impl Tab {
             scrollback_lines,
             event_proxy,
             self.id,
+            shadow_prompt_enabled,
         );
 
         let replacement = LayoutNode::Split {
@@ -240,7 +252,13 @@ impl Tab {
     }
 
     /// Moves focus in the given direction within this tab.
-    pub fn focus_move(&mut self, dir: SplitDir, positive: bool, rects: &[(PaneId, Rect)]) -> bool {
+    pub fn focus_move(
+        &mut self,
+        dir: SplitDir,
+        positive: bool,
+        rects: &[(PaneId, Rect)],
+        overlap_weight: i64,
+    ) -> bool {
         let Some((_, cur_rect)) = rects.iter().find(|(id, _)| *id == self.focused_pane) else {
             return false;
         };
@@ -261,7 +279,7 @@ impl Tab {
                             continue;
                         }
                         let dist = (cur_rect.x - (r.x + r.w)) as i64;
-                        (overlap as i64) * 1000 - dist
+                        (overlap as i64) * overlap_weight - dist
                     } else {
                         continue;
                     }
@@ -274,7 +292,7 @@ impl Tab {
                             continue;
                         }
                         let dist = (r.x - (cur_rect.x + cur_rect.w)) as i64;
-                        (overlap as i64) * 1000 - dist
+                        (overlap as i64) * overlap_weight - dist
                     } else {
                         continue;
                     }
@@ -287,7 +305,7 @@ impl Tab {
                             continue;
                         }
                         let dist = (cur_rect.y - (r.y + r.h)) as i64;
-                        (overlap as i64) * 1000 - dist
+                        (overlap as i64) * overlap_weight - dist
                     } else {
                         continue;
                     }
@@ -300,7 +318,7 @@ impl Tab {
                             continue;
                         }
                         let dist = (r.y - (cur_rect.y + cur_rect.h)) as i64;
-                        (overlap as i64) * 1000 - dist
+                        (overlap as i64) * overlap_weight - dist
                     } else {
                         continue;
                     }
@@ -324,8 +342,7 @@ impl Tab {
     }
 
     /// Resizes the focused pane in the given direction.
-    pub fn resize_focused(&mut self, dir: SplitDir, negative: bool) -> bool {
-        let step = 0.05;
+    pub fn resize_focused(&mut self, dir: SplitDir, negative: bool, step: f32) -> bool {
         let delta = match (dir, negative) {
             (SplitDir::Vertical, true) => -step,
             (SplitDir::Vertical, false) => step,

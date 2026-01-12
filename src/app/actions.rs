@@ -135,10 +135,37 @@ impl App {
             | Action::SearchToggleRegex
             | Action::SearchConfirm => {}
 
+            // Config
+            Action::ReloadConfig => self.reload_config(),
+
             // Shell integration actions
             Action::CopyLastOutput => self.copy_last_output(),
             Action::JumpToPrevPrompt => self.jump_to_prompt(false),
             Action::JumpToNextPrompt => self.jump_to_prompt(true),
+            Action::ToggleShadowPrompt => {
+                use yatmux::config::ShadowPromptMode;
+
+                if self.config.shell_integration.shadow_prompt == ShadowPromptMode::Off {
+                    self.show_toast("Shadow prompt is disabled in config");
+                    return;
+                }
+
+                let message = if let Some(pane) = self.focused_pane_mut() {
+                    pane.shadow_prompt_enabled = !pane.shadow_prompt_enabled;
+                    if !pane.shadow_prompt_enabled {
+                        pane.shadow_prompt.clear();
+                    }
+                    if pane.shadow_prompt_enabled {
+                        "Shadow prompt: ON"
+                    } else {
+                        "Shadow prompt: OFF"
+                    }
+                } else {
+                    return;
+                };
+
+                self.show_toast(message);
+            }
         }
     }
 
@@ -210,13 +237,14 @@ impl App {
 
         let tab_bar_height = self.tab_bar_height();
         let pane_height = (buffer_height as usize).saturating_sub(tab_bar_height);
+        let overlap_weight = self.config.interaction.focus_move_overlap_weight;
 
         let Some(tab) = self.active_tab_mut() else {
             return;
         };
 
         let (rects, _) = tab.pane_rects(buffer_width as usize, pane_height);
-        if tab.focus_move(dir, positive, &rects) {
+        if tab.focus_move(dir, positive, &rects, overlap_weight) {
             self.refresh_active_tab_title_from_focused_pane();
             self.update_cursor();
             self.request_redraw();
@@ -225,8 +253,9 @@ impl App {
 
     /// Resizes the focused pane in the given direction.
     fn resize_focused(&mut self, dir: SplitDir, negative: bool) {
+        let step = self.config.interaction.pane_resize_step;
         if let Some(tab) = self.active_tab_mut() {
-            if tab.resize_focused(dir, negative) {
+            if tab.resize_focused(dir, negative, step) {
                 self.layout_dirty = true;
                 self.request_redraw();
             }
@@ -255,6 +284,10 @@ impl App {
         let scale = self.config.font.scale;
         let scrollback = self.config.terminal.scrollback_lines;
         let min_size = self.config.pane.min_size();
+        let shadow_default = self
+            .config
+            .shell_integration
+            .shadow_prompt_enabled_by_default;
         let proxy = self.event_proxy.clone();
 
         // Get the current focused pane's rect
@@ -268,6 +301,7 @@ impl App {
                 proxy.as_ref(),
                 focused_rect,
                 min_size,
+                shadow_default,
             ) {
                 self.layout_dirty = true;
                 self.refresh_active_tab_title_from_focused_pane();

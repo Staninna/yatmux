@@ -9,7 +9,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 use yatmux::config::Action;
 
-use yatmux::renderer::{HelpSection, create_palette};
+use yatmux::renderer::{HelpSection, UiStyle, create_palette_with_ansi};
 
 use crate::app::App;
 use crate::app::layout::{PaneId, Rect, draw_border, fill_rect};
@@ -61,7 +61,7 @@ impl App {
             }
         };
 
-        let palette = Arc::new(create_palette());
+        let palette = Arc::new(create_palette_with_ansi(self.config.colors.palette));
 
         self.graphics = Some(GraphicsState {
             context,
@@ -162,6 +162,7 @@ impl App {
         let bg_color = self.config.colors.background;
         let accent_color = self.config.colors.accent;
         let font_scale = self.config.font.scale;
+        let ui_style = UiStyle::from_config(&self.config);
         let num_tabs = self.tabs.len();
         let padding_left = self.config.pane.padding_left();
         let padding_right = self.config.pane.padding_right();
@@ -240,6 +241,7 @@ impl App {
                 bg_color,
                 accent_color,
                 font_scale,
+                &ui_style,
             );
         }
 
@@ -287,11 +289,13 @@ impl App {
                 &pane.terminal,
                 &palette,
                 &mut pane.view,
+                &ui_style,
             ) {
                 eprintln!("Render pane {} error: {e:#}", pane_render.id);
             }
 
             // Render sticky prompt if scrolled up and enabled (not during command execution)
+
             if self.config.shell_integration.sticky_prompt
                 && pane.view.is_scrolled_up()
                 && !pane.command_running
@@ -311,11 +315,22 @@ impl App {
                         &prompt_info.rows,
                         prompt_info.cursor,
                         &palette,
+                        &ui_style,
                     );
                 }
             }
 
-            // Draw border around the outer pane rect (not the content rect)
+            // Draw borders around panes.
+            // - Inactive panes: subtle divider border
+            // - Active pane: accent border on top
+            draw_border(
+                &mut buffer,
+                buffer_width as usize,
+                buffer_height as usize,
+                pane_render.rect,
+                ui_style.divider,
+            );
+
             if pane_render.is_focused {
                 draw_border(
                     &mut buffer,
@@ -337,6 +352,21 @@ impl App {
         // Extract toast message before taking the graphics borrow
         let toast_message = self.current_toast().map(|s| s.to_string());
 
+        // Extract context menu info before taking the graphics borrow
+        let context_menu_info: Option<(usize, usize, Vec<(&str, usize)>)> =
+            self.context_menu().map(|menu| {
+                let items: Vec<(&str, usize)> = menu
+                    .items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (label, _action))| {
+                        let is_hovered = if menu.hovered == Some(i) { 1 } else { 0 };
+                        (*label, is_hovered)
+                    })
+                    .collect();
+                (menu.x, menu.y, items)
+            });
+
         // Extract shadow prompt state if visible and command is running (use cached state)
         let shadow_prompt_info: Option<(String, usize)> = {
             use yatmux::config::ShadowPromptMode;
@@ -348,13 +378,18 @@ impl App {
                     .and_then(|t| t.focused_pane())
                     .and_then(|p| {
                         // Use cached command_running state instead of calling is_command_running()
-                        let should_show = match mode {
-                            ShadowPromptMode::Off => false,
-                            ShadowPromptMode::Always => p.command_running,
-                            ShadowPromptMode::OnTyping => {
-                                p.command_running && p.shadow_prompt.visible
-                            }
-                        };
+                        let should_show =
+                            if !p.shadow_prompt_enabled || p.terminal.is_alt_screen_active() {
+                                false
+                            } else {
+                                match mode {
+                                    ShadowPromptMode::Off => false,
+                                    ShadowPromptMode::Always => p.command_running,
+                                    ShadowPromptMode::OnTyping => {
+                                        p.command_running && p.shadow_prompt.visible
+                                    }
+                                }
+                            };
                         if should_show {
                             Some((p.shadow_prompt.buffer.clone(), p.shadow_prompt.cursor))
                         } else {
@@ -388,7 +423,7 @@ impl App {
                     w: d.w,
                     h: d.h,
                 },
-                0x2A2A2A,
+                ui_style.divider,
             );
         }
 
@@ -454,6 +489,7 @@ impl App {
                 accent_color,
                 font_scale,
                 shell_integration_detected,
+                &ui_style,
             );
             self.help_scroll = scroll;
             self.help_max_scroll = max_scroll;
@@ -468,6 +504,21 @@ impl App {
                 input,
                 cursor_pos,
                 font_scale,
+                &ui_style,
+            );
+        }
+
+        // Render context menu if visible
+        if let Some((menu_x, menu_y, ref items)) = context_menu_info {
+            self.renderer.paint_context_menu(
+                &mut buffer,
+                buffer_width as usize,
+                buffer_height as usize,
+                menu_x,
+                menu_y,
+                items,
+                font_scale,
+                &ui_style,
             );
         }
 
@@ -479,6 +530,7 @@ impl App {
                 buffer_height as usize,
                 message,
                 font_scale,
+                &ui_style,
             );
         }
 
@@ -496,13 +548,14 @@ impl App {
         bg_color: u32,
         accent_color: u32,
         font_scale: usize,
+        style: &UiStyle,
     ) {
         let scale = font_scale.clamp(1, 8);
         let cell_w = 8 * scale;
         let cell_h = 8 * scale;
 
         // Background
-        let tab_bar_bg = 0x1A1A1A;
+        let tab_bar_bg = style.tab_bar_bg;
         for y in 0..tab_bar_height {
             let row = y * buffer_width;
             for x in 0..buffer_width {
@@ -513,7 +566,7 @@ impl App {
         // Bottom border
         let border_y = tab_bar_height.saturating_sub(1);
         for x in 0..buffer_width {
-            buffer[border_y * buffer_width + x] = 0x333333;
+            buffer[border_y * buffer_width + x] = style.tab_bar_border;
         }
 
         // Calculate tab dimensions to share total space
@@ -522,18 +575,23 @@ impl App {
             return;
         }
 
-        let tab_gap = 4;
-        let side_padding = 8;
+        let tab_gap = style.tab_gap_px;
+        let side_padding = style.tab_side_padding_px;
         let total_gap_width = tab_gap * (num_tabs.saturating_sub(1)) + side_padding * 2;
         let available_width = buffer_width.saturating_sub(total_gap_width);
-        let tab_width = (available_width / num_tabs).min(cell_w * 12 + 16); // Cap max width
+        let tab_width = (available_width / num_tabs)
+            .min(cell_w * style.tab_max_width_cells + style.tab_max_width_px_extra);
         let max_title_chars = (tab_width.saturating_sub(16)) / cell_w; // Account for padding
 
         let mut x_offset = side_padding;
 
         for (idx, (title, is_active)) in tabs.iter().enumerate() {
             // Tab background
-            let tab_bg = if *is_active { bg_color } else { 0x252525 };
+            let tab_bg = if *is_active {
+                bg_color
+            } else {
+                style.tab_inactive_bg
+            };
 
             let tab_x0 = x_offset;
             let tab_x1 = if idx == num_tabs - 1 {
@@ -571,7 +629,11 @@ impl App {
 
             // Tab title (centered in tab)
             let display_title: String = title.chars().take(max_title_chars).collect();
-            let text_color = if *is_active { 0xFFFFFF } else { 0x888888 };
+            let text_color = if *is_active {
+                style.base_fg
+            } else {
+                style.tab_inactive_text
+            };
             let title_pixel_width = display_title.chars().count() * cell_w;
             let tab_content_width = tab_x1.saturating_sub(tab_x0);
             let text_x = tab_x0 + (tab_content_width.saturating_sub(title_pixel_width)) / 2;
