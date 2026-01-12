@@ -195,6 +195,15 @@ impl TerminalView {
         self.scroll_offset = new_offset as usize;
     }
 
+    pub fn scrollback_scroll_to(&mut self, offset: usize) {
+        let max_offset = self.max_scroll_offset();
+        self.scroll_offset = offset.min(max_offset);
+    }
+
+    pub fn scrollback_offset(&self) -> usize {
+        self.scroll_offset
+    }
+
     pub fn scrollback_snap_to_bottom(&mut self) {
         self.scroll_offset = 0;
     }

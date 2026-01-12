@@ -6,7 +6,7 @@ use vt100::Color;
 pub type CellData = (char, Color, Color);
 
 /// A snapshot of a single terminal row.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RowSnapshot {
     pub cells: Vec<CellData>,
     pub tabs: Vec<Option<(usize, usize)>>,

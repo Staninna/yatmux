@@ -168,6 +168,7 @@ impl Renderer {
         scroll_offset: usize,
         accent_color: u32,
         font_scale: usize,
+        shell_integration_detected: bool,
     ) -> (usize, usize) {
         help::paint_help_overlay(
             backbuffer,
@@ -178,7 +179,124 @@ impl Renderer {
             scroll_offset,
             accent_color,
             font_scale,
+            shell_integration_detected,
         )
+    }
+
+    /// Paint a sticky prompt at the bottom of a pane region.
+    #[allow(clippy::too_many_arguments)]
+    pub fn paint_sticky_prompt(
+        &self,
+        backbuffer: &mut [u32],
+        buffer_width: usize,
+        buffer_height: usize,
+        origin_x: usize,
+        origin_y: usize,
+        region_w: usize,
+        region_h: usize,
+        cell_w: usize,
+        cell_h: usize,
+        font_scale: usize,
+        prompt_rows: &[crate::core::grid::RowSnapshot],
+        cursor: Option<(usize, usize)>,
+        palette: &[u32; 256],
+    ) {
+        if prompt_rows.is_empty() {
+            return;
+        }
+
+        let num_prompt_rows = prompt_rows.len();
+        let padding_top = cell_h / 2;
+        let padding_bottom = cell_h / 2;
+        let prompt_height = num_prompt_rows * cell_h + padding_top + padding_bottom;
+
+        if prompt_height > region_h / 2 {
+            return;
+        }
+
+        let sticky_area_y = origin_y + region_h - prompt_height;
+        let prompt_y = sticky_area_y + padding_top;
+
+        // Draw separator line
+        let separator_y = sticky_area_y.saturating_sub(1);
+        if separator_y >= origin_y && separator_y < origin_y + region_h {
+            for x in origin_x..(origin_x + region_w).min(buffer_width) {
+                if separator_y < buffer_height {
+                    backbuffer[separator_y * buffer_width + x] = 0x444444;
+                }
+            }
+        }
+
+        // Draw background
+        let sticky_bg = 0x1A1A1A;
+        for y in sticky_area_y..(origin_y + region_h).min(buffer_height) {
+            for x in origin_x..(origin_x + region_w).min(buffer_width) {
+                backbuffer[y * buffer_width + x] = sticky_bg;
+            }
+        }
+
+        // Draw each prompt row
+        for (row_idx, row_data) in prompt_rows.iter().enumerate() {
+            let cols = row_data.cells.len();
+            for col in 0..cols {
+                let (ch, fg_color, bg_color) = row_data.cells.get(col).copied().unwrap_or((
+                    ' ',
+                    Color::Default,
+                    Color::Default,
+                ));
+
+                let is_cursor = cursor
+                    .map(|(r, c)| r == row_idx && c == col)
+                    .unwrap_or(false);
+
+                let fg = color_to_u32(fg_color, DEFAULT_FG_COLOR, palette);
+                let bg = color_to_u32(bg_color, sticky_bg, palette);
+
+                let fill_color = if matches!(bg_color, Color::Default) {
+                    sticky_bg
+                } else {
+                    bg
+                };
+
+                let (fg, fill_color) = if is_cursor {
+                    (fill_color, fg)
+                } else {
+                    (fg, fill_color)
+                };
+
+                let x0 = origin_x + col * cell_w;
+                let y0 = prompt_y + row_idx * cell_h;
+
+                let clip_right = (origin_x + region_w).min(buffer_width);
+                let clip_bottom = (origin_y + region_h).min(buffer_height);
+
+                if x0 >= clip_right || y0 >= clip_bottom {
+                    continue;
+                }
+
+                for y in y0..(y0 + cell_h).min(clip_bottom) {
+                    for x in x0..(x0 + cell_w).min(clip_right) {
+                        backbuffer[y * buffer_width + x] = fill_color;
+                    }
+                }
+
+                let glyph = font::get_glyph(ch);
+                self.draw_glyph(
+                    backbuffer,
+                    buffer_width,
+                    buffer_height,
+                    origin_x,
+                    origin_y,
+                    region_w,
+                    region_h,
+                    font_scale,
+                    x0,
+                    y0,
+                    glyph,
+                    fg,
+                );
+            }
+        }
     }
 
     fn paint_frame(
@@ -519,6 +637,284 @@ impl Renderer {
                 bar_y, glyph, info_color,
             );
             x_pos += cell_w;
+        }
+    }
+
+    /// Paints a small toast notification at the bottom-center of the screen.
+    pub fn paint_toast(
+        &self,
+        buffer: &mut [u32],
+        buffer_width: usize,
+        buffer_height: usize,
+        message: &str,
+        font_scale: usize,
+    ) {
+        let scale = font_scale.clamp(1, 8);
+        let cell_w = GLYPH_W * scale;
+        let cell_h = GLYPH_H * scale;
+
+        let text_len = message.chars().count();
+        let padding_x = cell_w;
+        let padding_y = cell_h / 2;
+
+        let toast_width = text_len * cell_w + padding_x * 2;
+        let toast_height = cell_h + padding_y * 2;
+
+        // Position: bottom-center, slightly above the bottom edge
+        let toast_x = (buffer_width.saturating_sub(toast_width)) / 2;
+        let toast_y = buffer_height.saturating_sub(toast_height + cell_h * 2);
+
+        // Semi-transparent dark background
+        let bg_color = 0x2A2A2A;
+        let fg_color = 0xCCCCCC;
+        let border_color = 0x444444;
+
+        // Draw background
+        for y in toast_y..toast_y + toast_height {
+            if y >= buffer_height {
+                continue;
+            }
+            for x in toast_x..toast_x + toast_width {
+                if x >= buffer_width {
+                    continue;
+                }
+                buffer[y * buffer_width + x] = bg_color;
+            }
+        }
+
+        // Draw border (single pixel)
+        for x in toast_x..toast_x + toast_width {
+            if x < buffer_width {
+                if toast_y > 0 && toast_y - 1 < buffer_height {
+                    buffer[(toast_y) * buffer_width + x] = border_color;
+                }
+                if toast_y + toast_height - 1 < buffer_height {
+                    buffer[(toast_y + toast_height - 1) * buffer_width + x] = border_color;
+                }
+            }
+        }
+        for y in toast_y..toast_y + toast_height {
+            if y < buffer_height {
+                if toast_x < buffer_width {
+                    buffer[y * buffer_width + toast_x] = border_color;
+                }
+                if toast_x + toast_width - 1 < buffer_width {
+                    buffer[y * buffer_width + toast_x + toast_width - 1] = border_color;
+                }
+            }
+        }
+
+        // Draw text
+        let text_x = toast_x + padding_x;
+        let text_y = toast_y + padding_y;
+
+        for (i, ch) in message.chars().enumerate() {
+            let x = text_x + i * cell_w;
+            if x + cell_w > buffer_width {
+                break;
+            }
+            let glyph = font::get_glyph(ch);
+            self.draw_glyph(
+                buffer,
+                buffer_width,
+                buffer_height,
+                0,
+                0,
+                buffer_width,
+                buffer_height,
+                font_scale,
+                x,
+                text_y,
+                glyph,
+                fg_color,
+            );
+        }
+    }
+
+    /// Paints the shadow prompt at the bottom of the screen.
+    /// Shows a prompt indicator (e.g. "$") and the buffered input with cursor.
+    pub fn paint_shadow_prompt(
+        &self,
+        buffer: &mut [u32],
+        buffer_width: usize,
+        buffer_height: usize,
+        input: &str,
+        cursor_pos: usize,
+        font_scale: usize,
+    ) {
+        let scale = font_scale.clamp(1, 8);
+        let cell_w = GLYPH_W * scale;
+        let cell_h = GLYPH_H * scale;
+
+        // Prompt indicator
+        let prompt_indicator = "$ ";
+        let prompt_len = prompt_indicator.len();
+
+        // Calculate visible portion of input (handle long input)
+        let max_visible_chars = (buffer_width / cell_w).saturating_sub(prompt_len + 2);
+        let input_chars: Vec<char> = input.chars().collect();
+
+        // Calculate cursor position in chars
+        let cursor_char_pos = input[..cursor_pos.min(input.len())].chars().count();
+
+        // Calculate visible window around cursor
+        let (visible_start, visible_input): (usize, String) =
+            if input_chars.len() <= max_visible_chars {
+                (0, input.to_string())
+            } else {
+                // Keep cursor visible, preferably in the middle
+                let half_visible = max_visible_chars / 2;
+                let start = if cursor_char_pos < half_visible {
+                    0
+                } else if cursor_char_pos > input_chars.len().saturating_sub(half_visible) {
+                    input_chars.len().saturating_sub(max_visible_chars)
+                } else {
+                    cursor_char_pos.saturating_sub(half_visible)
+                };
+                let end = (start + max_visible_chars).min(input_chars.len());
+                (start, input_chars[start..end].iter().collect())
+            };
+
+        let visible_cursor_pos = cursor_char_pos.saturating_sub(visible_start);
+
+        let text_len = prompt_len + visible_input.chars().count() + 1; // +1 for cursor
+        let padding_x = cell_w / 2;
+        let padding_y = cell_h / 4;
+
+        let prompt_width = (text_len * cell_w + padding_x * 2).min(buffer_width);
+        let prompt_height = cell_h + padding_y * 2;
+
+        // Position: bottom-left, at the bottom edge
+        let prompt_x = padding_x;
+        let prompt_y = buffer_height.saturating_sub(prompt_height + cell_h / 2);
+
+        // Semi-transparent dark background with slight blue tint
+        let bg_color = 0x1A2030;
+        let fg_color = 0xAABBCC;
+        let cursor_color = 0x88AAFF;
+        let prompt_color = 0x66AA66;
+        let border_color = 0x334455;
+
+        // Draw background
+        for y in prompt_y..prompt_y + prompt_height {
+            if y >= buffer_height {
+                continue;
+            }
+            for x in prompt_x..prompt_x + prompt_width {
+                if x >= buffer_width {
+                    continue;
+                }
+                buffer[y * buffer_width + x] = bg_color;
+            }
+        }
+
+        // Draw border
+        for x in prompt_x..prompt_x + prompt_width {
+            if x < buffer_width {
+                if prompt_y < buffer_height {
+                    buffer[prompt_y * buffer_width + x] = border_color;
+                }
+                if prompt_y + prompt_height - 1 < buffer_height {
+                    buffer[(prompt_y + prompt_height - 1) * buffer_width + x] = border_color;
+                }
+            }
+        }
+        for y in prompt_y..prompt_y + prompt_height {
+            if y < buffer_height {
+                if prompt_x < buffer_width {
+                    buffer[y * buffer_width + prompt_x] = border_color;
+                }
+                if prompt_x + prompt_width - 1 < buffer_width {
+                    buffer[y * buffer_width + prompt_x + prompt_width - 1] = border_color;
+                }
+            }
+        }
+
+        // Draw prompt indicator
+        let text_x = prompt_x + padding_x;
+        let text_y = prompt_y + padding_y;
+
+        for (i, ch) in prompt_indicator.chars().enumerate() {
+            let x = text_x + i * cell_w;
+            if x + cell_w > buffer_width {
+                break;
+            }
+            let glyph = font::get_glyph(ch);
+            self.draw_glyph(
+                buffer,
+                buffer_width,
+                buffer_height,
+                0,
+                0,
+                buffer_width,
+                buffer_height,
+                font_scale,
+                x,
+                text_y,
+                glyph,
+                prompt_color,
+            );
+        }
+
+        // Draw input text
+        let input_start_x = text_x + prompt_len * cell_w;
+        for (i, ch) in visible_input.chars().enumerate() {
+            let x = input_start_x + i * cell_w;
+            if x + cell_w > buffer_width {
+                break;
+            }
+            let glyph = font::get_glyph(ch);
+            self.draw_glyph(
+                buffer,
+                buffer_width,
+                buffer_height,
+                0,
+                0,
+                buffer_width,
+                buffer_height,
+                font_scale,
+                x,
+                text_y,
+                glyph,
+                fg_color,
+            );
+        }
+
+        // Draw cursor
+        let cursor_x = input_start_x + visible_cursor_pos * cell_w;
+        if cursor_x + cell_w <= buffer_width {
+            // Draw a block cursor
+            for y in text_y..text_y + cell_h {
+                if y >= buffer_height {
+                    continue;
+                }
+                for x in cursor_x..cursor_x + cell_w {
+                    if x >= buffer_width {
+                        continue;
+                    }
+                    buffer[y * buffer_width + x] = cursor_color;
+                }
+            }
+
+            // Draw the character at cursor position in contrasting color (if any)
+            if visible_cursor_pos < visible_input.chars().count() {
+                let cursor_char = visible_input.chars().nth(visible_cursor_pos).unwrap_or(' ');
+                let glyph = font::get_glyph(cursor_char);
+                self.draw_glyph(
+                    buffer,
+                    buffer_width,
+                    buffer_height,
+                    0,
+                    0,
+                    buffer_width,
+                    buffer_height,
+                    font_scale,
+                    cursor_x,
+                    text_y,
+                    glyph,
+                    bg_color,
+                );
+            }
         }
     }
 }
