@@ -8,6 +8,6 @@ A small terminal emulator with tabs, splits, and a themeable UI.
 
 ## Quick run (from source)
 
-- `cargo run`
+- `cargo run -r`
 
 On first launch, yatmux writes a commented config template (when a config directory can be determined). Reload config at runtime with `ctrl+shift+r`.
