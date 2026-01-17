@@ -131,9 +131,8 @@ impl Renderer {
         let menu_width = max_label_len * cell_w + padding_x * 2;
         let menu_height = items.len() * item_height;
 
-        // Adjust position to keep menu on screen
-        let menu_x = menu_x.min(buffer_width.saturating_sub(menu_width));
-        let menu_y = menu_y.min(buffer_height.saturating_sub(menu_height));
+        // Position is already adjusted for screen boundaries during menu creation
+        // No need to adjust here
 
         let bg_color = style.context_menu_bg;
         let hover_bg = style.context_menu_hover_bg;

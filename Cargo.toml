@@ -23,3 +23,11 @@ winit = "0.30"
 
 [patch.crates-io]
 tattoy-wezterm-term = { path = "vendor/tattoy-wezterm-term" }
+
+# Enable a small amount of optimization in the dev profile.
+[profile.dev]
+opt-level = 1
+
+# Enable a large amount of optimization in the dev profile for dependencies.
+[profile.dev.package."*"]
+opt-level = 3

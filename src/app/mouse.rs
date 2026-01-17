@@ -135,14 +135,49 @@ impl App {
     fn handle_tab_bar_click(&mut self) {
         let scale = self.config.font.scale.clamp(1, 8);
         let cell_w = 8 * scale;
-        let tab_padding = 8;
-        let tab_width = cell_w * 8 + tab_padding * 2; // ~8 chars per tab + padding
+        let buffer_width = self.last_buffer_size.0 as usize;
+        let num_tabs = self.tabs.len();
+
+        if num_tabs == 0 {
+            return;
+        }
+
+        // Use the same calculation as actual rendering
+        let style = &yatmux::renderer::UiStyle::from_config(&self.config);
+        let tab_gap = style.tab_gap_px;
+        let side_padding = style.tab_side_padding_px;
+        let total_gap_width = tab_gap * (num_tabs.saturating_sub(1)) + side_padding * 2;
+        let available_width = buffer_width.saturating_sub(total_gap_width);
+        let tab_width = (available_width / num_tabs)
+            .min(cell_w * style.tab_max_width_cells + style.tab_max_width_px_extra);
 
         let click_x = self.input.cursor_position.x as usize;
-        let tab_index = click_x / tab_width;
 
-        if tab_index < self.tabs.len() {
-            self.goto_tab(tab_index);
+        // Check if click is in the side padding area
+        if click_x < side_padding {
+            return;
+        }
+
+        // Calculate which tab was clicked
+        let mut x_offset = side_padding;
+        for (idx, _) in self.tabs.iter().enumerate() {
+            let tab_x0 = x_offset;
+            let tab_x1 = if idx == num_tabs - 1 {
+                // Last tab extends to fill remaining space (minus padding)
+                (x_offset + tab_width).min(buffer_width.saturating_sub(side_padding))
+            } else {
+                (x_offset + tab_width).min(buffer_width)
+            };
+
+            if click_x >= tab_x0 && click_x < tab_x1 {
+                self.goto_tab(idx);
+                return;
+            }
+
+            x_offset = tab_x1 + tab_gap;
+            if x_offset >= buffer_width {
+                break;
+            }
         }
     }
 
@@ -205,10 +240,35 @@ impl App {
             items.push(("Jump to Next Prompt", ContextMenuAction::JumpToNextPrompt));
         }
 
-        self.context_menu = Some(ContextMenu {
-            items,
+        // Calculate menu dimensions for position adjustment
+        let scale = self.config.font.scale.clamp(1, 8);
+        let cell_w = 8 * scale;
+        let padding_x = cell_w;
+        let max_label_len = items
+            .iter()
+            .map(|(label, _)| label.len())
+            .max()
+            .unwrap_or(8);
+        let menu_width = max_label_len * cell_w + padding_x * 2;
+        let item_height = 8 * scale + 8; // cell height + padding
+        let menu_height = items.len() * item_height;
+
+        // Calculate rendered position adjusted for screen boundaries
+        let (rendered_x, rendered_y) = ContextMenu::calculate_rendered_position(
             x,
             y,
+            menu_width,
+            menu_height,
+            self.last_buffer_size.0 as usize,
+            self.last_buffer_size.1 as usize,
+        );
+
+        self.context_menu = Some(ContextMenu {
+            items,
+            click_x: x,
+            click_y: y,
+            rendered_x,
+            rendered_y,
             hovered: Some(0),
         });
         self.request_redraw();
@@ -242,10 +302,25 @@ impl App {
         // Update context menu hover state if menu is open
         if let Some(ref mut menu) = self.context_menu {
             let scale = self.config.font.scale.clamp(1, 8);
+            let cell_w = 8 * scale;
             let item_height = 8 * scale + 8;
+
+            // Calculate actual menu width based on items
+            let padding_x = cell_w;
+            let max_label_len = menu
+                .items
+                .iter()
+                .map(|(label, _)| label.len())
+                .max()
+                .unwrap_or(8);
+            let menu_width = max_label_len * cell_w + padding_x * 2;
+
+            let x = position.x as usize;
             let y = position.y as usize;
-            if y >= menu.y {
-                let relative_y = y - menu.y;
+
+            // Check if cursor is within menu bounds using rendered position
+            if x >= menu.rendered_x && x < menu.rendered_x + menu_width && y >= menu.rendered_y {
+                let relative_y = y - menu.rendered_y;
                 let item_index = relative_y / item_height;
                 if item_index < menu.items.len() {
                     menu.hovered = Some(item_index);

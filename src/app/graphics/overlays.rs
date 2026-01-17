@@ -39,7 +39,7 @@ impl App {
                         (*label, is_hovered)
                     })
                     .collect();
-                (menu.x, menu.y, items)
+                (menu.rendered_x, menu.rendered_y, items)
             });
 
         // Extract shadow prompt state if visible and command is running (use cached state)
