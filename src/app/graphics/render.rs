@@ -29,6 +29,7 @@ impl App {
         let bg_color = self.config.colors.background;
         let accent_color = self.config.colors.accent;
         let font_scale = self.config.font.scale;
+        let font_config = self.config.font.clone();
         let ui_style = UiStyle::from_config(&self.config);
         let num_tabs = self.tabs.len();
 
@@ -76,6 +77,8 @@ impl App {
                 accent_color,
                 font_scale,
                 &ui_style,
+                &mut self.renderer.font_renderer,
+                &font_config,
             );
         }
 
@@ -99,6 +102,7 @@ impl App {
             accent_color,
             font_scale,
             &ui_style,
+            &font_config,
         );
     }
 }

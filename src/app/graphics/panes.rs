@@ -74,7 +74,13 @@ impl App {
         accent_color: u32,
     ) {
         for pane_render in pane_data {
-            let (cell_w, cell_h) = Self::cell_size_for_scale(pane_render.scale);
+            let mut pane_font_config = self.config.font.clone();
+            pane_font_config.scale = pane_render.scale;
+            let (cell_w, cell_h) = self.renderer.font_renderer.cell_size(&pane_font_config);
+            if cell_w == 0 || cell_h == 0 {
+                continue;
+            }
+
             if pane_render.content_rect.w < cell_w || pane_render.content_rect.h < cell_h {
                 continue;
             }
@@ -113,6 +119,8 @@ impl App {
                 palette,
                 &mut pane.view,
                 ui_style,
+                &pane_font_config,
+                self.show_test_pattern,
             ) {
                 eprintln!("Render pane {} error: {e:#}", pane_render.id);
             }
@@ -138,6 +146,7 @@ impl App {
                         prompt_info.cursor,
                         palette,
                         ui_style,
+                        &pane_font_config,
                     );
                 }
             }
