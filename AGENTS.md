@@ -57,8 +57,11 @@ src/
 - **Cargo**: Standard Rust build system
 - **build.rs**: Custom build script that generates `builtin_themes.rs` from `themes/` directory
 - **Dependencies**: Uses `winit` for windowing, `portable-pty` for PTY, custom `tattoy-wezterm-term` fork
+- **Vendor Directory**: `vendor/` contains forked dependencies. Only inspect when debugging dependency issues or strange behavior.
 
 ## Development Commands
+
+**Important**: When checking if the app compiles, **never run `cargo build` or `cargo run`**. Use `cargo check` instead to verify the code compiles without waiting for a full build.
 
 ### Essential Commands
 
