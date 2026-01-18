@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use log::debug;
 use softbuffer::Surface;
 use vt100::Color;
 
+use crate::config::FontConfig;
 use crate::terminal::Terminal;
 
 use super::Renderer;
@@ -18,7 +20,7 @@ impl Renderer {
     /// Paint a terminal into a region of an existing backbuffer.
     #[allow(clippy::too_many_arguments)]
     pub fn paint_terminal_region(
-        &self,
+        &mut self,
         backbuffer: &mut [u32],
         buffer_width: usize,
         buffer_height: usize,
@@ -33,10 +35,17 @@ impl Renderer {
         palette: &Arc<[u32; 256]>,
         view: &mut TerminalView,
         style: &UiStyle,
+        font_config: &FontConfig,
+        show_test_pattern: bool,
     ) -> Result<()> {
         let cell_w = cell_w.max(1);
         let cell_h = cell_h.max(1);
         let font_scale = font_scale.clamp(1, 8);
+
+        if show_test_pattern {
+            self.draw_test_pattern(backbuffer, buffer_width, buffer_height, cell_w, cell_h);
+            return Ok(());
+        }
 
         if region_w < cell_w || region_h < cell_h {
             return Ok(());
@@ -62,19 +71,22 @@ impl Renderer {
             palette,
             view,
             style,
+            font_config,
         );
 
         Ok(())
     }
 
     pub fn render(
-        &self,
+        &mut self,
         surface: &mut Surface<winit::event_loop::OwnedDisplayHandle, winit::window::Window>,
         terminal: &Terminal,
         palette: &Arc<[u32; 256]>,
         view: &mut TerminalView,
         font_scale: usize,
         style: &UiStyle,
+        font_config: &FontConfig,
+        show_test_pattern: bool,
     ) -> Result<()> {
         let mut buffer = surface
             .buffer_mut()
@@ -85,8 +97,7 @@ impl Renderer {
         buffer.fill(style.base_bg);
 
         let font_scale = font_scale.clamp(1, 8);
-        let cell_w = 8 * font_scale;
-        let cell_h = 8 * font_scale;
+        let (cell_w, cell_h) = self.font_renderer.cell_size(font_config);
 
         self.paint_terminal_region(
             &mut buffer,
@@ -103,6 +114,8 @@ impl Renderer {
             palette,
             view,
             style,
+            font_config,
+            show_test_pattern,
         )?;
 
         buffer
@@ -112,8 +125,55 @@ impl Renderer {
         Ok(())
     }
 
-    fn paint_frame(
+    fn draw_test_pattern(
         &self,
+        buffer: &mut [u32],
+        width: usize,
+        height: usize,
+        cell_w: usize,
+        cell_h: usize,
+    ) {
+        let test_text = "TEST PATTERN";
+        let fg: u32 = 0xFFFFFF;
+        let bg: u32 = 0x1a1a2e;
+
+        let start_x = (width / 2).saturating_sub(test_text.len() * cell_w / 2);
+        let start_y = (height / 2).saturating_sub(cell_h / 2);
+
+        if start_x == 0 || start_y == 0 {
+            return;
+        }
+
+        for y in start_y..(start_y + cell_h).min(height) {
+            for x in start_x..(start_x + test_text.len() * cell_w).min(width) {
+                buffer[y * width + x] = bg;
+            }
+        }
+
+        for (i, ch) in test_text.chars().enumerate() {
+            let glyph = font::get_bitmap_glyph(ch);
+            let x = start_x + i * cell_w;
+            let y = start_y;
+            self.draw_glyph(
+                buffer, width, height, 0, 0, width, height, 1, x, y, glyph, fg,
+            );
+        }
+
+        let info_text = "Press Ctrl+Shift+G to toggle";
+        let info_start_x = (width / 2).saturating_sub(info_text.len() * cell_w / 2);
+        let info_y = start_y + cell_h * 2;
+
+        for (i, ch) in info_text.chars().enumerate() {
+            let glyph = font::get_bitmap_glyph(ch);
+            let x = info_start_x + i * cell_w;
+            self.draw_glyph(
+                buffer, width, height, 0, 0, width, height, 1, x, info_y, glyph, fg,
+            );
+        }
+    }
+
+    fn paint_frame(
+        &mut self,
         buffer: &mut [u32],
         buffer_width: usize,
         buffer_height: usize,
@@ -128,6 +188,7 @@ impl Renderer {
         palette: &[u32; 256],
         view: &TerminalView,
         style: &UiStyle,
+        font_config: &FontConfig,
     ) {
         for (row_idx, row_data) in frame.display_rows.iter().enumerate().take(frame.rows) {
             for col in 0..frame.cols {
@@ -170,6 +231,7 @@ impl Renderer {
                     hex_bg,
                     search_match,
                     style,
+                    font_config,
                 );
             }
         }
@@ -188,13 +250,14 @@ impl Renderer {
                 font_scale,
                 view,
                 style,
+                font_config,
             );
         }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn draw_cell(
-        &self,
+        &mut self,
         backbuffer: &mut [u32],
         width: usize,
         height: usize,
@@ -219,6 +282,7 @@ impl Renderer {
         hex_bg: Option<u32>,
         search_match: Option<bool>,
         style: &UiStyle,
+        font_config: &FontConfig,
     ) {
         let fg = color_to_u32(fg_color, style.base_fg, palette);
         let bg = color_to_u32(bg_color, style.base_bg, palette);
@@ -230,9 +294,6 @@ impl Renderer {
             None => bg,
         };
 
-        // If this cell is part of a hex color literal, render it like a "swatch"
-        // by using the hex value as the background color, but only when not
-        // overridden by selection/search highlighting.
         let mut fg = fg;
         if matches!(search_match, None) && !selected && tab_info.is_none() {
             if let Some(hex) = hex_bg {
@@ -241,7 +302,6 @@ impl Renderer {
             }
         }
 
-        // Handle cursor inversion after picking final fg/bg.
         let (fg, fill_color) = if invert {
             (fill_color, fg)
         } else {
@@ -287,11 +347,30 @@ impl Renderer {
             return;
         }
 
-        let glyph = font::get_glyph(ch);
-        self.draw_glyph(
-            backbuffer, width, height, origin_x, origin_y, region_w, region_h, font_scale, x0, y0,
-            glyph, fg,
-        );
+        match self.font_renderer.get_glyph(ch, font_config) {
+            Ok(Some(tt_glyph)) if tt_glyph.height > 0 && tt_glyph.width > 0 => {
+                let baseline = self.font_renderer.baseline_offset(font_config) as usize;
+                let glyph_top = y0 + baseline.saturating_sub(tt_glyph.bearing_y as usize);
+                self.draw_native_glyph(
+                    backbuffer,
+                    width,
+                    height,
+                    x0,
+                    glyph_top,
+                    &tt_glyph.pixels,
+                    tt_glyph.width,
+                    tt_glyph.height,
+                    fg,
+                );
+            }
+            _ => {
+                let glyph = font::get_bitmap_glyph(ch);
+                self.draw_glyph(
+                    backbuffer, width, height, origin_x, origin_y, region_w, region_h, font_scale,
+                    x0, y0, glyph, fg,
+                );
+            }
+        }
 
         if is_url_hovered {
             let underline_y = y0 + cell_h - 2;

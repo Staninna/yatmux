@@ -16,24 +16,39 @@ impl App {
         let padding_top = self.config.pane.padding_top();
         let padding_bottom = self.config.pane.padding_bottom();
 
-        let Some(tab) = self.active_tab() else {
-            return;
+        // Get rects and pre-compute cell sizes before mutable borrow
+        let (rects, cell_sizes) = {
+            let Some(tab) = self.active_tab() else {
+                return;
+            };
+            let (rects, _) = tab.pane_rects(buffer_width as usize, pane_height);
+
+            // Pre-compute cell sizes for each pane to avoid borrowing issues
+            let mut sizes = std::collections::HashMap::new();
+            for (id, _) in &rects {
+                if let Some(pane) = tab.panes.get(id) {
+                    let mut pane_font_config = self.config.font.clone();
+                    pane_font_config.scale = pane.scale;
+                    let cell_size = self.renderer.font_renderer.cell_size(&pane_font_config);
+                    sizes.insert(*id, cell_size);
+                }
+            }
+            (rects, sizes)
         };
 
-        let (rects, _) = tab.pane_rects(buffer_width as usize, pane_height);
-
-        // We need to iterate over the tab's panes, so we re-borrow
+        // Now we can mutably borrow tab to resize terminals
         let Some(tab) = self.active_tab_mut() else {
             return;
         };
 
         for (id, rect) in rects {
             if let Some(pane) = tab.panes.get(&id) {
-                let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
-                // Calculate content dimensions (after padding)
-                let content_w = rect.w.saturating_sub(padding_left + padding_right) as u32;
-                let content_h = rect.h.saturating_sub(padding_top + padding_bottom) as u32;
-                pane.terminal.resize(content_w, content_h, cell_w, cell_h);
+                if let Some(&(cell_w, cell_h)) = cell_sizes.get(&id) {
+                    // Calculate content dimensions (after padding)
+                    let content_w = rect.w.saturating_sub(padding_left + padding_right) as u32;
+                    let content_h = rect.h.saturating_sub(padding_top + padding_bottom) as u32;
+                    pane.terminal.resize(content_w, content_h, cell_w, cell_h);
+                }
             }
         }
 

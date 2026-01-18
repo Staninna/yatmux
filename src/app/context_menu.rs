@@ -56,9 +56,8 @@ impl App {
         let menu = self.context_menu.as_ref()?;
         let cursor_pos = self.input.cursor_position;
 
-        let scale = self.config.font.scale.clamp(1, 8);
-        let cell_w = 8 * scale;
-        let item_height = 8 * scale + 8; // cell height + padding
+        let (cell_w, cell_h) = self.renderer.font_renderer.cell_size(&self.config.font);
+        let item_height = cell_h + 8; // cell height + padding
 
         // Calculate actual menu width based on items
         let padding_x = cell_w;

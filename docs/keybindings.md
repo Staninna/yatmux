@@ -65,6 +65,7 @@ Actions are defined in `src/config/action.rs` and are serialized as `snake_case`
 - `search_find`, `search_close`, `search_next`, `search_prev`, `search_toggle_case`, `search_toggle_regex`, `search_confirm`
 - `copy_last_output`, `jump_to_prev_prompt`, `jump_to_next_prompt`, `toggle_shadow_prompt`
 - `reload_config`
+- `toggle_test_pattern`
 
 ## Default bindings
 
@@ -168,4 +169,10 @@ These are active while search UI is open:
 "ctrl+shift+pageup" = "jump_to_prev_prompt"
 "ctrl+shift+pagedown" = "jump_to_next_prompt"
 "ctrl+shift+y" = "toggle_shadow_prompt"
+```
+
+### Debug
+
+```toml
+"ctrl+shift+g" = "toggle_test_pattern"
 ```

@@ -9,6 +9,8 @@ use app::{App, AppEvent};
 use yatmux::Config;
 
 fn main() -> Result<()> {
+    env_logger::init();
+
     // Load configuration
     let config = Config::load();
 

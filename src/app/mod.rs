@@ -28,7 +28,6 @@ use winit::keyboard::{Key, NamedKey};
 
 use yatmux::clipboard::{ClipboardProvider, SystemClipboard};
 use yatmux::config::{Action, Config, ShadowPromptMode};
-use yatmux::constants::CELL_H;
 use yatmux::keys::key_to_pty_bytes;
 use yatmux::renderer::Renderer;
 
@@ -75,6 +74,7 @@ pub struct App {
     pub help_scroll: usize,
     pub help_max_scroll: usize,
     pub should_exit: bool,
+    pub show_test_pattern: bool,
 
     last_window_title: Option<String>,
 
@@ -106,6 +106,7 @@ impl App {
             help_scroll: 0,
             help_max_scroll: 0,
             should_exit: false,
+            show_test_pattern: false,
             last_window_title: None,
             toast: None,
             context_menu: None,
@@ -192,7 +193,9 @@ impl App {
         let pane = tab.panes.get(&pane_id)?;
 
         let local = Self::localize_pos(pane_rect, cursor_pos);
-        let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
+        let mut pane_font_config = self.config.font.clone();
+        pane_font_config.scale = pane.scale;
+        let (cell_w, cell_h) = self.renderer.font_renderer.cell_size(&pane_font_config);
         let (row, col) = pane.view.window_to_cell(local.x, local.y, cell_w, cell_h)?;
 
         pane.view.url_at(row, col)

@@ -166,6 +166,11 @@ impl App {
 
                 self.show_toast(message);
             }
+
+            Action::ToggleTestPattern => {
+                self.show_test_pattern = !self.show_test_pattern;
+                self.request_redraw();
+            }
         }
     }
 

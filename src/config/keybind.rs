@@ -141,6 +141,9 @@ impl Default for KeybindConfig {
         bindings.insert("ctrl+shift+pagedown".to_string(), Action::JumpToNextPrompt);
         bindings.insert("ctrl+shift+y".to_string(), Action::ToggleShadowPrompt);
 
+        // Debug actions
+        bindings.insert("ctrl+shift+g".to_string(), Action::ToggleTestPattern);
+
         KeybindConfig { bindings }
     }
 }

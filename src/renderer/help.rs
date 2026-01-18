@@ -297,7 +297,7 @@ fn draw_text_line(
         if x + cell_w > origin_x + box_w - padding_cells_x * cell_w {
             break;
         }
-        let glyph = font::get_glyph(ch);
+        let glyph = font::get_bitmap_glyph(ch);
         draw_glyph_help(
             backbuffer,
             buffer_width,

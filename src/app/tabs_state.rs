@@ -24,8 +24,8 @@ impl App {
 
     pub fn tab_bar_height(&self) -> usize {
         if self.tabs.len() > 1 {
-            let scale = self.config.font.scale.clamp(1, 8);
-            8 * scale + 4 // cell height + padding
+            let (_, cell_h) = self.renderer.font_renderer.cell_size(&self.config.font);
+            cell_h + 4 // cell height + padding
         } else {
             0
         }

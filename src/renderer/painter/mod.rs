@@ -9,11 +9,15 @@ mod hud;
 mod overlays;
 mod primitives;
 
+use crate::renderer::font::FontRenderer;
+
 /// Pixel-paints a `RenderFrame` to the window surface.
 ///
 /// All interactive state lives in `TerminalView`; this type is intentionally
 /// stateless.
-pub struct Renderer;
+pub struct Renderer {
+    pub font_renderer: FontRenderer,
+}
 
 impl Default for Renderer {
     fn default() -> Self {
@@ -23,6 +27,8 @@ impl Default for Renderer {
 
 impl Renderer {
     pub fn new() -> Self {
-        Renderer
+        Renderer {
+            font_renderer: FontRenderer::new().expect("Failed to initialize font renderer"),
+        }
     }
 }

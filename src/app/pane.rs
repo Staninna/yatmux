@@ -127,12 +127,6 @@ pub struct Pane {
 }
 
 impl App {
-    /// Computes the cell size for a given scale.
-    pub fn cell_size_for_scale(scale: usize) -> (usize, usize) {
-        let scale = scale.clamp(1, 8);
-        (8 * scale, 8 * scale)
-    }
-
     /// Updates the cursor icon based on hover state.
     pub fn update_cursor(&self) {
         let Some(graphics) = &self.graphics else {

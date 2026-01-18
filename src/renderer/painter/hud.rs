@@ -1,4 +1,4 @@
-use crate::constants::{GLYPH_H, GLYPH_W};
+use crate::config::FontConfig;
 
 use super::Renderer;
 
@@ -8,17 +8,16 @@ use super::super::font;
 impl Renderer {
     /// Paints a small toast notification at the bottom-center of the screen.
     pub fn paint_toast(
-        &self,
+        &mut self,
         buffer: &mut [u32],
         buffer_width: usize,
         buffer_height: usize,
         message: &str,
         font_scale: usize,
         style: &UiStyle,
+        font_config: &FontConfig,
     ) {
-        let scale = font_scale.clamp(1, 8);
-        let cell_w = GLYPH_W * scale;
-        let cell_h = GLYPH_H * scale;
+        let (cell_w, cell_h) = self.font_renderer.cell_size(font_config);
 
         let text_len = message.chars().count();
         let padding_x = cell_w;
@@ -80,27 +79,45 @@ impl Renderer {
             if x + cell_w > buffer_width {
                 break;
             }
-            let glyph = font::get_glyph(ch);
-            self.draw_glyph(
-                buffer,
-                buffer_width,
-                buffer_height,
-                0,
-                0,
-                buffer_width,
-                buffer_height,
-                font_scale,
-                x,
-                text_y,
-                glyph,
-                fg_color,
-            );
+            if let Ok(Some(tt_glyph)) = self.font_renderer.get_glyph(ch, font_config) {
+                let baseline_offset = self.font_renderer.baseline_offset(font_config);
+                let glyph_y = text_y
+                    .saturating_add(baseline_offset as usize)
+                    .saturating_sub(tt_glyph.bearing_y as usize);
+                self.draw_native_glyph(
+                    buffer,
+                    buffer_width,
+                    buffer_height,
+                    x,
+                    glyph_y,
+                    &tt_glyph.pixels,
+                    tt_glyph.width,
+                    tt_glyph.height,
+                    fg_color,
+                );
+            } else {
+                let glyph = font::get_bitmap_glyph(ch);
+                self.draw_glyph(
+                    buffer,
+                    buffer_width,
+                    buffer_height,
+                    0,
+                    0,
+                    buffer_width,
+                    buffer_height,
+                    font_scale,
+                    x,
+                    text_y,
+                    glyph,
+                    fg_color,
+                );
+            }
         }
     }
 
     /// Paints a context menu at the specified position.
     pub fn paint_context_menu(
-        &self,
+        &mut self,
         buffer: &mut [u32],
         buffer_width: usize,
         buffer_height: usize,
@@ -109,15 +126,13 @@ impl Renderer {
         items: &[(&str, usize)], // (label, is_hovered as 1 or 0)
         font_scale: usize,
         style: &UiStyle,
+        font_config: &FontConfig,
     ) {
         if items.is_empty() {
             return;
         }
 
-        let scale = font_scale.clamp(1, 8);
-        let cell_w = GLYPH_W * scale;
-        let cell_h = GLYPH_H * scale;
-
+        let (cell_w, cell_h) = self.font_renderer.cell_size(font_config);
         let padding_x = cell_w;
         let padding_y = cell_h / 4;
         let item_height = cell_h + padding_y * 2;
@@ -202,21 +217,39 @@ impl Renderer {
                 if x + cell_w > buffer_width {
                     break;
                 }
-                let glyph = font::get_glyph(ch);
-                self.draw_glyph(
-                    buffer,
-                    buffer_width,
-                    buffer_height,
-                    0,
-                    0,
-                    buffer_width,
-                    buffer_height,
-                    font_scale,
-                    x,
-                    text_y,
-                    glyph,
-                    fg_color,
-                );
+                if let Ok(Some(tt_glyph)) = self.font_renderer.get_glyph(ch, font_config) {
+                    let baseline_offset = self.font_renderer.baseline_offset(font_config);
+                    let glyph_y = text_y
+                        .saturating_add(baseline_offset as usize)
+                        .saturating_sub(tt_glyph.bearing_y as usize);
+                    self.draw_native_glyph(
+                        buffer,
+                        buffer_width,
+                        buffer_height,
+                        x,
+                        glyph_y,
+                        &tt_glyph.pixels,
+                        tt_glyph.width,
+                        tt_glyph.height,
+                        fg_color,
+                    );
+                } else {
+                    let glyph = font::get_bitmap_glyph(ch);
+                    self.draw_glyph(
+                        buffer,
+                        buffer_width,
+                        buffer_height,
+                        0,
+                        0,
+                        buffer_width,
+                        buffer_height,
+                        font_scale,
+                        x,
+                        text_y,
+                        glyph,
+                        fg_color,
+                    );
+                }
             }
         }
     }
@@ -224,7 +257,7 @@ impl Renderer {
     /// Paints the shadow prompt at the bottom of the screen.
     /// Shows a prompt indicator (e.g. "$") and the buffered input with cursor.
     pub fn paint_shadow_prompt(
-        &self,
+        &mut self,
         buffer: &mut [u32],
         buffer_width: usize,
         buffer_height: usize,
@@ -232,10 +265,9 @@ impl Renderer {
         cursor_pos: usize,
         font_scale: usize,
         style: &UiStyle,
+        font_config: &FontConfig,
     ) {
-        let scale = font_scale.clamp(1, 8);
-        let cell_w = GLYPH_W * scale;
-        let cell_h = GLYPH_H * scale;
+        let (cell_w, cell_h) = self.font_renderer.cell_size(font_config);
 
         // Prompt indicator
         let prompt_indicator = "$ ";
@@ -329,21 +361,39 @@ impl Renderer {
             if x + cell_w > buffer_width {
                 break;
             }
-            let glyph = font::get_glyph(ch);
-            self.draw_glyph(
-                buffer,
-                buffer_width,
-                buffer_height,
-                0,
-                0,
-                buffer_width,
-                buffer_height,
-                font_scale,
-                x,
-                text_y,
-                glyph,
-                prompt_color,
-            );
+            if let Ok(Some(tt_glyph)) = self.font_renderer.get_glyph(ch, font_config) {
+                let baseline_offset = self.font_renderer.baseline_offset(font_config);
+                let glyph_y = text_y
+                    .saturating_add(baseline_offset as usize)
+                    .saturating_sub(tt_glyph.bearing_y as usize);
+                self.draw_native_glyph(
+                    buffer,
+                    buffer_width,
+                    buffer_height,
+                    x,
+                    glyph_y,
+                    &tt_glyph.pixels,
+                    tt_glyph.width,
+                    tt_glyph.height,
+                    prompt_color,
+                );
+            } else {
+                let glyph = font::get_bitmap_glyph(ch);
+                self.draw_glyph(
+                    buffer,
+                    buffer_width,
+                    buffer_height,
+                    0,
+                    0,
+                    buffer_width,
+                    buffer_height,
+                    font_scale,
+                    x,
+                    text_y,
+                    glyph,
+                    prompt_color,
+                );
+            }
         }
 
         // Draw input text
@@ -353,21 +403,39 @@ impl Renderer {
             if x + cell_w > buffer_width {
                 break;
             }
-            let glyph = font::get_glyph(ch);
-            self.draw_glyph(
-                buffer,
-                buffer_width,
-                buffer_height,
-                0,
-                0,
-                buffer_width,
-                buffer_height,
-                font_scale,
-                x,
-                text_y,
-                glyph,
-                fg_color,
-            );
+            if let Ok(Some(tt_glyph)) = self.font_renderer.get_glyph(ch, font_config) {
+                let baseline_offset = self.font_renderer.baseline_offset(font_config);
+                let glyph_y = text_y
+                    .saturating_add(baseline_offset as usize)
+                    .saturating_sub(tt_glyph.bearing_y as usize);
+                self.draw_native_glyph(
+                    buffer,
+                    buffer_width,
+                    buffer_height,
+                    x,
+                    glyph_y,
+                    &tt_glyph.pixels,
+                    tt_glyph.width,
+                    tt_glyph.height,
+                    fg_color,
+                );
+            } else {
+                let glyph = font::get_bitmap_glyph(ch);
+                self.draw_glyph(
+                    buffer,
+                    buffer_width,
+                    buffer_height,
+                    0,
+                    0,
+                    buffer_width,
+                    buffer_height,
+                    font_scale,
+                    x,
+                    text_y,
+                    glyph,
+                    fg_color,
+                );
+            }
         }
 
         // Draw cursor
@@ -389,21 +457,39 @@ impl Renderer {
             // Draw the character at cursor position in contrasting color (if any)
             if visible_cursor_pos < visible_input.chars().count() {
                 let cursor_char = visible_input.chars().nth(visible_cursor_pos).unwrap_or(' ');
-                let glyph = font::get_glyph(cursor_char);
-                self.draw_glyph(
-                    buffer,
-                    buffer_width,
-                    buffer_height,
-                    0,
-                    0,
-                    buffer_width,
-                    buffer_height,
-                    font_scale,
-                    cursor_x,
-                    text_y,
-                    glyph,
-                    bg_color,
-                );
+                if let Ok(Some(tt_glyph)) = self.font_renderer.get_glyph(cursor_char, font_config) {
+                    let baseline_offset = self.font_renderer.baseline_offset(font_config);
+                    let glyph_y = text_y
+                        .saturating_add(baseline_offset as usize)
+                        .saturating_sub(tt_glyph.bearing_y as usize);
+                    self.draw_native_glyph(
+                        buffer,
+                        buffer_width,
+                        buffer_height,
+                        cursor_x,
+                        glyph_y,
+                        &tt_glyph.pixels,
+                        tt_glyph.width,
+                        tt_glyph.height,
+                        bg_color,
+                    );
+                } else {
+                    let glyph = font::get_bitmap_glyph(cursor_char);
+                    self.draw_glyph(
+                        buffer,
+                        buffer_width,
+                        buffer_height,
+                        0,
+                        0,
+                        buffer_width,
+                        buffer_height,
+                        font_scale,
+                        cursor_x,
+                        text_y,
+                        glyph,
+                        bg_color,
+                    );
+                }
             }
         }
     }

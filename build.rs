@@ -10,8 +10,10 @@ fn is_toml_theme(path: &Path) -> bool {
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let themes_dir = manifest_dir.join("themes");
+    let fonts_dir = manifest_dir.join("fonts");
 
     println!("cargo:rerun-if-changed=themes");
+    println!("cargo:rerun-if-changed=fonts");
 
     let mut theme_files: Vec<PathBuf> = match fs::read_dir(&themes_dir) {
         Ok(rd) => rd

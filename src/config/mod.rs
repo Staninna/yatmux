@@ -23,7 +23,7 @@ mod window;
 pub use action::Action;
 pub use colors::ColorConfig;
 pub use config::Config;
-pub use font::FontConfig;
+pub use font::{FontConfig, FontSlant, FontWeight};
 pub use interaction::InteractionConfig;
 pub use keybind::{Keybind, KeybindConfig};
 pub use pane::PaneConfig;
@@ -42,8 +42,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::constants::{
-    DEFAULT_BG_COLOR, DEFAULT_COLS, DEFAULT_FG_COLOR, DEFAULT_ROWS, FONT_SCALE,
-    SCROLL_SPEED_MULTIPLIER, SCROLLBACK_CAPACITY, TAB_STOP_WIDTH,
+    DEFAULT_BG_COLOR, DEFAULT_COLS, DEFAULT_FG_COLOR, DEFAULT_ROWS, SCROLL_SPEED_MULTIPLIER,
+    SCROLLBACK_CAPACITY, TAB_STOP_WIDTH,
 };
 
 // Make serde helper modules available for `#[serde(with = "...")]` in submodules.

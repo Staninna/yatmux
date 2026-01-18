@@ -1,6 +1,9 @@
-use yatmux::renderer::UiStyle;
+use yatmux::config::FontConfig;
+use yatmux::renderer::{UiStyle, font::get_bitmap_glyph};
 
 use crate::app::App;
+
+use yatmux::renderer::font::FontRenderer;
 
 impl App {
     /// Renders the tab bar at the top of the window (static method to avoid borrow issues).
@@ -13,10 +16,10 @@ impl App {
         accent_color: u32,
         font_scale: usize,
         style: &UiStyle,
+        font_renderer: &mut FontRenderer,
+        font_config: &FontConfig,
     ) {
-        let scale = font_scale.clamp(1, 8);
-        let cell_w = 8 * scale;
-        let cell_h = 8 * scale;
+        let (cell_w, cell_h) = font_renderer.cell_size(font_config);
 
         // Background
         let tab_bar_bg = style.tab_bar_bg;
@@ -110,7 +113,8 @@ impl App {
                 text_y,
                 &display_title,
                 text_color,
-                scale,
+                font_renderer,
+                font_config,
             );
 
             x_offset = tab_x1 + tab_gap;
@@ -121,7 +125,7 @@ impl App {
         }
     }
 
-    /// Draws text at the given position using the bitmap font.
+    /// Draws text at the given position using TrueType fonts with bitmap fallback.
     fn draw_text_static(
         buffer: &mut [u32],
         buffer_width: usize,
@@ -129,23 +133,52 @@ impl App {
         y: usize,
         text: &str,
         color: u32,
-        scale: usize,
+        font_renderer: &mut FontRenderer,
+        font_config: &FontConfig,
     ) {
-        let cell_w = 8 * scale;
+        let (cell_w, cell_h) = font_renderer.cell_size(font_config);
+        let baseline_offset = font_renderer.baseline_offset(font_config);
+        let fixed_bearing = font_renderer.max_bearing_y(font_config) as usize;
 
         let mut char_x = x;
         for ch in text.chars() {
-            let glyph = yatmux::renderer::font::get_glyph(ch);
-            for gy in 0..8 {
-                let bits = glyph[gy];
-                for gx in 0..8 {
-                    if (bits >> gx) & 1 == 1 {
-                        for sy in 0..scale {
-                            for sx in 0..scale {
-                                let px = char_x + gx * scale + sx;
-                                let py = y + gy * scale + sy;
-                                if px < buffer_width {
-                                    buffer[py * buffer_width + px] = color;
+            if let Ok(Some(tt_glyph)) = font_renderer.get_glyph(ch, font_config) {
+                // Position glyph at baseline
+                let glyph_y = y
+                    .saturating_add(baseline_offset as usize)
+                    .saturating_sub(fixed_bearing);
+
+                // Draw at native size
+                for py in 0..tt_glyph.height {
+                    let y_pos = glyph_y + py;
+                    if y_pos >= y + cell_h {
+                        break;
+                    }
+                    for px in 0..tt_glyph.width {
+                        let x_pos = char_x + px;
+                        if x_pos >= buffer_width {
+                            break;
+                        }
+                        let alpha = tt_glyph.pixels[py * tt_glyph.width + px];
+                        if alpha > 0 {
+                            buffer[y_pos * buffer_width + x_pos] = color;
+                        }
+                    }
+                }
+            } else {
+                let glyph = get_bitmap_glyph(ch);
+                let bitmap_scale = (cell_h / 8).max(1);
+                for gy in 0..8 {
+                    let bits = glyph[gy];
+                    for gx in 0..8 {
+                        if (bits >> gx) & 1 == 1 {
+                            for sy in 0..bitmap_scale {
+                                for sx in 0..bitmap_scale {
+                                    let px = char_x + gx * bitmap_scale + sx;
+                                    let py = y + gy * bitmap_scale + sy;
+                                    if px < buffer_width && py < y + cell_h {
+                                        buffer[py * buffer_width + px] = color;
+                                    }
                                 }
                             }
                         }

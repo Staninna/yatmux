@@ -60,7 +60,9 @@ impl App {
             let Some(pane) = tab.panes.get(&pane_id) else {
                 return;
             };
-            let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
+            let mut pane_font_config = self.config.font.clone();
+            pane_font_config.scale = pane.scale;
+            let (cell_w, cell_h) = self.renderer.font_renderer.cell_size(&pane_font_config);
             let coords = pane.view.window_to_cell(local.x, local.y, cell_w, cell_h);
             (pane.terminal.is_mouse_grabbed(), coords, pane.scale)
         };
@@ -88,7 +90,20 @@ impl App {
 
         match state {
             ElementState::Pressed => {
-                // Get pane scale and check for URL
+                // Get pane scale and cell size first
+                let (cell_w, cell_h) = {
+                    let Some(tab) = self.active_tab() else {
+                        return;
+                    };
+                    let Some(pane) = tab.panes.get(&pane_id) else {
+                        return;
+                    };
+                    let mut pane_font_config = self.config.font.clone();
+                    pane_font_config.scale = pane.scale;
+                    self.renderer.font_renderer.cell_size(&pane_font_config)
+                };
+
+                // Now get URL with mutable borrow
                 let (_scale, url_to_open, cell_coords) = {
                     let Some(tab) = self.active_tab_mut() else {
                         return;
@@ -97,7 +112,6 @@ impl App {
                         return;
                     };
 
-                    let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
                     let coords = pane.view.window_to_cell(local.x, local.y, cell_w, cell_h);
                     let url = coords.and_then(|(row, col)| pane.view.url_at(row, col));
                     (pane.scale, url, coords)
@@ -133,8 +147,7 @@ impl App {
     }
 
     fn handle_tab_bar_click(&mut self) {
-        let scale = self.config.font.scale.clamp(1, 8);
-        let cell_w = 8 * scale;
+        let (cell_w, _) = self.renderer.font_renderer.cell_size(&self.config.font);
         let buffer_width = self.last_buffer_size.0 as usize;
         let num_tabs = self.tabs.len();
 
@@ -241,8 +254,7 @@ impl App {
         }
 
         // Calculate menu dimensions for position adjustment
-        let scale = self.config.font.scale.clamp(1, 8);
-        let cell_w = 8 * scale;
+        let (cell_w, cell_h) = self.renderer.font_renderer.cell_size(&self.config.font);
         let padding_x = cell_w;
         let max_label_len = items
             .iter()
@@ -250,7 +262,7 @@ impl App {
             .max()
             .unwrap_or(8);
         let menu_width = max_label_len * cell_w + padding_x * 2;
-        let item_height = 8 * scale + 8; // cell height + padding
+        let item_height = cell_h + 8; // cell height + padding
         let menu_height = items.len() * item_height;
 
         // Calculate rendered position adjusted for screen boundaries
@@ -301,9 +313,8 @@ impl App {
 
         // Update context menu hover state if menu is open
         if let Some(ref mut menu) = self.context_menu {
-            let scale = self.config.font.scale.clamp(1, 8);
-            let cell_w = 8 * scale;
-            let item_height = 8 * scale + 8;
+            let (cell_w, cell_h) = self.renderer.font_renderer.cell_size(&self.config.font);
+            let item_height = cell_h + 8;
 
             // Calculate actual menu width based on items
             let padding_x = cell_w;
@@ -357,7 +368,9 @@ impl App {
             let Some(pane) = tab.panes.get(&pane_id) else {
                 return;
             };
-            let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
+            let mut pane_font_config = self.config.font.clone();
+            pane_font_config.scale = pane.scale;
+            let (cell_w, cell_h) = self.renderer.font_renderer.cell_size(&pane_font_config);
             if let Some((row, col)) = pane.view.window_to_cell(local.x, local.y, cell_w, cell_h) {
                 use yatmux::terminal::{
                     KeyModifiers, MouseButton as TermMouseButton, MouseEventKind,
@@ -374,16 +387,27 @@ impl App {
             return;
         }
 
+        // Get pane scale and compute cell size before mutable borrow
+        let (pane_scale, focused_pane, cell_w, cell_h) = {
+            let Some(tab) = self.active_tab() else {
+                return;
+            };
+            let Some(pane) = tab.panes.get(&pane_id) else {
+                return;
+            };
+            let mut pane_font_config = self.config.font.clone();
+            pane_font_config.scale = pane.scale;
+            let cell_size = self.renderer.font_renderer.cell_size(&pane_font_config);
+            (pane.scale, tab.focused_pane, cell_size.0, cell_size.1)
+        };
+
         let Some(tab) = self.active_tab_mut() else {
             return;
         };
 
-        let focused_pane = tab.focused_pane;
         let Some(pane) = tab.panes.get_mut(&pane_id) else {
             return;
         };
-
-        let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
 
         if mouse_selecting && pane_id == focused_pane {
             if let Some((row, col)) = pane.view.window_to_cell(local.x, local.y, cell_w, cell_h) {
@@ -412,8 +436,12 @@ impl App {
                 let cell_h = self
                     .active_tab()
                     .and_then(|t| t.focused_pane())
-                    .map(|p| Self::cell_size_for_scale(p.scale).1)
-                    .unwrap_or(CELL_H);
+                    .map(|p| {
+                        let mut pane_font_config = self.config.font.clone();
+                        pane_font_config.scale = p.scale;
+                        self.renderer.font_renderer.cell_size(&pane_font_config).1
+                    })
+                    .unwrap_or_else(|| self.renderer.font_renderer.cell_size(&self.config.font).1);
                 (pos.y / cell_h as f64).round() as isize
             }
         };
@@ -436,24 +464,42 @@ impl App {
         let (buffer_width, buffer_height) = self.last_buffer_size;
         let cursor_pos = self.input.cursor_position;
 
+        // Determine target pane and compute cell size before mutable borrow
+        let (target, is_grabbed, cell_w, cell_h) = {
+            let Some(tab) = self.active_tab() else {
+                return;
+            };
+
+            let target = if buffer_width > 0 && buffer_height > 0 {
+                let (rects, _divs) = tab.pane_rects(buffer_width as usize, buffer_height as usize);
+                rects
+                    .iter()
+                    .find(|(_, r)| r.contains(cursor_pos.x, cursor_pos.y))
+                    .map(|(id, _)| *id)
+                    .unwrap_or(tab.focused_pane)
+            } else {
+                tab.focused_pane
+            };
+
+            let Some(pane) = tab.panes.get(&target) else {
+                return;
+            };
+
+            let mut pane_font_config = self.config.font.clone();
+            pane_font_config.scale = pane.scale;
+            let cell_size = self.renderer.font_renderer.cell_size(&pane_font_config);
+            let grabbed = pane.terminal.is_mouse_grabbed();
+
+            (target, grabbed, cell_size.0, cell_size.1)
+        };
+
         let Some(tab) = self.active_tab_mut() else {
             return;
         };
 
-        let target = if buffer_width > 0 && buffer_height > 0 {
-            let (rects, _divs) = tab.pane_rects(buffer_width as usize, buffer_height as usize);
-            rects
-                .iter()
-                .find(|(_, r)| r.contains(cursor_pos.x, cursor_pos.y))
-                .map(|(id, _)| *id)
-                .unwrap_or(tab.focused_pane)
-        } else {
-            tab.focused_pane
-        };
-
         if let Some(pane) = tab.panes.get_mut(&target) {
             // Check if terminal wants mouse events (for scroll in apps like less, vim)
-            if pane.terminal.is_mouse_grabbed() {
+            if is_grabbed {
                 use yatmux::terminal::{
                     KeyModifiers, MouseButton as TermMouseButton, MouseEventKind,
                 };
@@ -464,7 +510,6 @@ impl App {
                 };
                 let modifiers = KeyModifiers::NONE;
                 // Use current cursor position in cell coordinates
-                let (cell_w, cell_h) = Self::cell_size_for_scale(pane.scale);
                 let (row, col) = pane
                     .view
                     .window_to_cell(cursor_pos.x, cursor_pos.y, cell_w, cell_h)
