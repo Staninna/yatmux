@@ -41,7 +41,10 @@ impl FontRenderer {
 
         if let Some(font) = Font::try_from_bytes(static_font_data) {
             debug!("Loaded bundled JetBrains Mono font");
-            renderer.fonts.borrow_mut().insert("default".to_string(), font);
+            renderer
+                .fonts
+                .borrow_mut()
+                .insert("default".to_string(), font);
         } else {
             return Err("Failed to parse bundled font".to_string());
         }
@@ -134,7 +137,7 @@ impl FontRenderer {
             let width = bb.width() as usize;
             let height = bb.height() as usize;
             let bearing_x = bb.min.x;
-            let bearing_y = -bb.min.y;  // Distance from baseline to glyph top
+            let bearing_y = -bb.min.y; // Distance from baseline to glyph top
 
             let mut pixels = vec![0u8; width * height];
             pg.draw(|x, y, v| {
@@ -187,11 +190,7 @@ impl FontRenderer {
         let cell_h = (metrics.ascent - metrics.descent + metrics.line_gap)
             .ceil()
             .max(1.0) as usize;
-        let advance = font
-            .glyph('M')
-            .scaled(rt_scale)
-            .h_metrics()
-            .advance_width;
+        let advance = font.glyph('M').scaled(rt_scale).h_metrics().advance_width;
         let cell_w = if advance > 0.0 {
             advance.ceil().max(1.0) as usize
         } else {

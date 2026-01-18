@@ -287,8 +287,12 @@ impl Renderer {
         }
 
         let content_origin_y = origin_y + padding_cells_y * cell_h + fixed_lines.len() * cell_h;
-        let placements =
-            layout_blocks(&blocks, start_idx, if use_two_columns { 2 } else { 1 }, content_rows);
+        let placements = layout_blocks(
+            &blocks,
+            start_idx,
+            if use_two_columns { 2 } else { 1 },
+            content_rows,
+        );
 
         let content_x0 = origin_x + padding_cells_x * cell_w;
         let content_x1 = (origin_x + box_w).saturating_sub(padding_cells_x * cell_w);
@@ -1026,7 +1030,11 @@ fn layout_blocks(
     for (idx, block) in blocks.iter().enumerate().skip(start_idx) {
         if block.height > content_rows {
             if placements.is_empty() {
-                placements.push(BlockPlacement { index: idx, col, row: 0 });
+                placements.push(BlockPlacement {
+                    index: idx,
+                    col,
+                    row: 0,
+                });
             }
             break;
         }
@@ -1037,7 +1045,11 @@ fn layout_blocks(
         if col >= columns {
             break;
         }
-        placements.push(BlockPlacement { index: idx, col, row });
+        placements.push(BlockPlacement {
+            index: idx,
+            col,
+            row,
+        });
         row += block.height;
     }
 
