@@ -73,10 +73,7 @@ impl Renderer {
 
         let content_max_len = blocks.iter().map(|block| block.max_len).max().unwrap_or(0);
         let gutter_cells = 4usize;
-        let max_scale = style
-            .help_font_scale_max
-            .clamp(1.0, 8.0)
-            .round() as usize;
+        let max_scale = self.font_renderer.quantize_scale(style.help_font_scale_max);
         let mut selected_layout: Option<HelpLayout> = None;
         let mut fallback_layout: Option<HelpLayout> = None;
 
@@ -141,7 +138,7 @@ impl Renderer {
         let cell_w = layout.cell_w;
         let cell_h = layout.cell_h;
         let use_two_columns = layout.use_two_columns;
-        let font_scale = layout.scale;
+        let font_scale = layout.scale as f32;
 
         let total_content_rows: usize = blocks.iter().map(|block| block.height).sum();
         let content_rows_needed = if use_two_columns {
@@ -443,7 +440,7 @@ impl Renderer {
         font_config: &FontConfig,
         cell_w: usize,
         cell_h: usize,
-        font_scale: usize,
+        font_scale: f32,
     ) {
         match line {
             HelpLine::Spacer => {}
@@ -522,7 +519,7 @@ impl Renderer {
         text_color: u32,
         font_config: &FontConfig,
         cell_w: usize,
-        font_scale: usize,
+        font_scale: f32,
     ) {
         let mut x = x0;
         for ch in text.chars() {
@@ -576,7 +573,7 @@ impl Renderer {
         origin_y: usize,
         box_w: usize,
         box_h: usize,
-        font_scale: usize,
+        font_scale: f32,
         x0: usize,
         y0: usize,
         glyph: [u8; 8],
@@ -585,7 +582,7 @@ impl Renderer {
         let clip_right = (origin_x + box_w).min(buffer_width);
         let clip_bottom = (origin_y + box_h).min(buffer_height);
 
-        let font_scale = font_scale.clamp(1, 8);
+        let font_scale = self.font_renderer.quantize_scale(font_scale);
 
         for gy in 0..8 {
             let bits = glyph[gy];
@@ -621,7 +618,7 @@ impl Renderer {
         region_h: usize,
         cell_w: usize,
         cell_h: usize,
-        font_scale: usize,
+        font_scale: f32,
         prompt_rows: &[crate::core::grid::RowSnapshot],
         cursor: Option<(usize, usize)>,
         palette: &[u32; 256],
@@ -730,7 +727,7 @@ impl Renderer {
                         origin_y,
                         region_w,
                         region_h,
-                        font_scale as f32,
+                        font_scale,
                         x0,
                         y0,
                         glyph,
@@ -752,7 +749,7 @@ impl Renderer {
         region_h: usize,
         cell_w: usize,
         cell_h: usize,
-        font_scale: usize,
+        font_scale: f32,
         view: &TerminalView,
         style: &UiStyle,
         font_config: &FontConfig,
@@ -815,7 +812,7 @@ impl Renderer {
                     origin_y,
                     region_w,
                     region_h,
-                    font_scale as f32,
+                    font_scale,
                     x_pos, bar_y, glyph, text_color,
                 );
             }
@@ -853,7 +850,7 @@ impl Renderer {
                     origin_y,
                     region_w,
                     region_h,
-                    font_scale as f32,
+                    font_scale,
                     x_pos, bar_y, glyph, text_color,
                 );
             }
@@ -933,7 +930,7 @@ impl Renderer {
                     origin_y,
                     region_w,
                     region_h,
-                    font_scale as f32,
+                    font_scale,
                     x_pos, bar_y, glyph, info_color,
                 );
             }

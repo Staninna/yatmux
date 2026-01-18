@@ -75,7 +75,8 @@ impl App {
     ) {
         for pane_render in pane_data {
             let mut pane_font_config = self.config.font.clone();
-            let pane_scale = pane_render.scale.clamp(1.0, 8.0);
+            let (scale_min, scale_max) = self.config.font_scale_clamp();
+            let pane_scale = pane_render.scale.clamp(scale_min, scale_max);
             pane_font_config.scale = pane_scale;
             let (cell_w, cell_h) = self.renderer.font_renderer.cell_size(&pane_font_config);
             if cell_w == 0 || cell_h == 0 {
@@ -141,7 +142,7 @@ impl App {
                         pane_render.content_rect.h,
                         cell_w,
                         cell_h,
-                        pane_scale.round() as usize,
+                        pane_scale,
                         &prompt_info.rows,
                         prompt_info.cursor,
                         palette,

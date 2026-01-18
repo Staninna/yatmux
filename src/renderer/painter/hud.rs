@@ -19,7 +19,7 @@ impl Renderer {
         let text_len = message.chars().count().max(1);
         let (font_scale, cell_w, cell_h) =
             if let Some(override_scale) = style.toast_font_scale_override {
-                let scale = override_scale.clamp(1.0, 8.0);
+                let scale = self.font_renderer.clamp_scale(override_scale);
                 let mut probe_font = font_config.clone();
                 probe_font.scale = scale;
                 let (cw, ch) = self.font_renderer.cell_size(&probe_font);
@@ -183,7 +183,7 @@ impl Renderer {
         menu_x: usize,
         menu_y: usize,
         items: &[(&str, usize)], // (label, is_hovered as 1 or 0)
-        font_scale: usize,
+        font_scale: f32,
         style: &UiStyle,
         font_config: &FontConfig,
     ) {
@@ -302,7 +302,7 @@ impl Renderer {
                         0,
                         buffer_width,
                         buffer_height,
-                        font_scale as f32,
+                        font_scale,
                         x,
                         text_y,
                         glyph,
@@ -322,7 +322,7 @@ impl Renderer {
         buffer_height: usize,
         input: &str,
         cursor_pos: usize,
-        font_scale: usize,
+        font_scale: f32,
         style: &UiStyle,
         font_config: &FontConfig,
     ) {
@@ -438,20 +438,20 @@ impl Renderer {
                 );
             } else {
                 let glyph = font::get_bitmap_glyph(ch);
-                    self.draw_glyph(
-                        buffer,
-                        buffer_width,
-                        buffer_height,
-                        0,
-                        0,
-                        buffer_width,
-                        buffer_height,
-                        font_scale as f32,
-                        x,
-                        text_y,
-                        glyph,
-                        prompt_color,
-                    );
+                self.draw_glyph(
+                    buffer,
+                    buffer_width,
+                    buffer_height,
+                    0,
+                    0,
+                    buffer_width,
+                    buffer_height,
+                    font_scale,
+                    x,
+                    text_y,
+                    glyph,
+                    prompt_color,
+                );
             }
         }
 
@@ -480,20 +480,20 @@ impl Renderer {
                 );
             } else {
                 let glyph = font::get_bitmap_glyph(ch);
-                    self.draw_glyph(
-                        buffer,
-                        buffer_width,
-                        buffer_height,
-                        0,
-                        0,
-                        buffer_width,
-                        buffer_height,
-                        font_scale as f32,
-                        x,
-                        text_y,
-                        glyph,
-                        fg_color,
-                    );
+                self.draw_glyph(
+                    buffer,
+                    buffer_width,
+                    buffer_height,
+                    0,
+                    0,
+                    buffer_width,
+                    buffer_height,
+                    font_scale,
+                    x,
+                    text_y,
+                    glyph,
+                    fg_color,
+                );
             }
         }
 
@@ -542,7 +542,7 @@ impl Renderer {
                         0,
                         buffer_width,
                         buffer_height,
-                        font_scale as f32,
+                        font_scale,
                         cursor_x,
                         text_y,
                         glyph,

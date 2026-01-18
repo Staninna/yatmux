@@ -2,6 +2,7 @@ use crate::config::FontConfig;
 use font8x8::UnicodeFonts;
 use log::{debug, warn};
 use rusttype::{Font, Scale, point};
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -9,6 +10,8 @@ use std::sync::Arc;
 pub struct FontRenderer {
     fonts: RefCell<HashMap<String, Font<'static>>>,
     glyph_cache: RefCell<HashMap<GlyphCacheKey, Arc<RenderedGlyph>>>,
+    scale_min: Cell<f32>,
+    scale_max: Cell<f32>,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -37,7 +40,12 @@ impl FontRenderer {
         let static_font_data: &'static [u8] = Box::leak(bundled_font_data.into_boxed_slice());
 
         let fonts = RefCell::new(HashMap::new());
-        let renderer = FontRenderer { fonts, glyph_cache };
+        let renderer = FontRenderer {
+            fonts,
+            glyph_cache,
+            scale_min: Cell::new(1.0),
+            scale_max: Cell::new(8.0),
+        };
 
         if let Some(font) = Font::try_from_bytes(static_font_data) {
             debug!("Loaded bundled JetBrains Mono font");
@@ -50,6 +58,36 @@ impl FontRenderer {
         }
 
         Ok(renderer)
+    }
+
+    pub fn set_scale_clamp(&self, scale_min: f32, scale_max: f32) {
+        let mut min = if scale_min.is_finite() { scale_min } else { 1.0 };
+        let mut max = if scale_max.is_finite() { scale_max } else { 8.0 };
+        min = min.clamp(0.25, 64.0);
+        max = max.clamp(0.25, 64.0);
+        if min > max {
+            std::mem::swap(&mut min, &mut max);
+        }
+
+        let old_min = self.scale_min.get();
+        let old_max = self.scale_max.get();
+        if (old_min, old_max) == (min, max) {
+            return;
+        }
+
+        self.scale_min.set(min);
+        self.scale_max.set(max);
+        self.clear_cache();
+    }
+
+    pub fn clamp_scale(&self, scale: f32) -> f32 {
+        let min = self.scale_min.get();
+        let max = self.scale_max.get();
+        scale.clamp(min, max)
+    }
+
+    pub fn quantize_scale(&self, scale: f32) -> usize {
+        self.clamp_scale(scale).round().max(1.0) as usize
     }
 
     fn load_font_by_name(&self, family: &str) -> Font<'static> {
@@ -113,7 +151,7 @@ impl FontRenderer {
         font_config: &FontConfig,
     ) -> Result<Option<Arc<RenderedGlyph>>, String> {
         let family = &font_config.family;
-        let scale_factor = font_config.scale.clamp(1.0, 8.0);
+        let scale_factor = self.clamp_scale(font_config.scale);
         let scaled_size = font_config.size * scale_factor;
         let size_key = (scaled_size * 100.0).round().max(1.0) as u32;
 
@@ -182,7 +220,7 @@ impl FontRenderer {
     }
 
     pub fn cell_size(&self, font_config: &FontConfig) -> (usize, usize) {
-        let scale = font_config.scale.clamp(1.0, 8.0);
+        let scale = self.clamp_scale(font_config.scale);
         let scaled_size = font_config.size * scale;
         let font = self.load_font_by_name(&font_config.family);
         let rt_scale = Scale::uniform(scaled_size);
@@ -204,7 +242,7 @@ impl FontRenderer {
     }
 
     pub fn baseline_offset(&self, font_config: &FontConfig) -> i32 {
-        let scale = font_config.scale.clamp(1.0, 8.0);
+        let scale = self.clamp_scale(font_config.scale);
         let scaled_size = font_config.size * scale;
         let font = self.load_font_by_name(&font_config.family);
         let metrics = font.v_metrics(Scale::uniform(scaled_size));
@@ -220,7 +258,7 @@ impl FontRenderer {
     /// Used for consistent top-alignment of glyphs in terminal cells.
     pub fn max_bearing_y(&self, font_config: &FontConfig) -> i32 {
         let font = self.load_font_by_name(&font_config.family);
-        let scale = Scale::uniform(font_config.size * font_config.scale.clamp(1.0, 8.0));
+        let scale = Scale::uniform(font_config.size * self.clamp_scale(font_config.scale));
 
         let mut max_bearing = 0i32;
         // Measure all printable ASCII to find the tallest glyph

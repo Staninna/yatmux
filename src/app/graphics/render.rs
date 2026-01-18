@@ -5,6 +5,11 @@ use crate::app::App;
 impl App {
     /// Renders all panes.
     pub fn render(&mut self) {
+        let (scale_min, scale_max) = self.config.font_scale_clamp();
+        self.renderer
+            .font_renderer
+            .set_scale_clamp(scale_min, scale_max);
+
         // Probe buffer dimensions and snapshot palette without holding borrows.
         let (buffer_width, buffer_height, palette) = {
             let Some(graphics) = &mut self.graphics else {
@@ -28,7 +33,7 @@ impl App {
         // Gather all config data we need
         let bg_color = self.config.colors.background;
         let accent_color = self.config.colors.accent;
-        let font_scale = self.config.font.scale;
+        let font_scale = self.renderer.font_renderer.clamp_scale(self.config.font.scale);
         let font_config = self.config.font.clone();
         let ui_style = UiStyle::from_config(&self.config);
         let num_tabs = self.tabs.len();

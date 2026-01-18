@@ -61,7 +61,7 @@ After loading, yatmux runs `config.apply_defaults()` to keep behavior sane even 
 
 Clamps and fallbacks:
 
-- `font.scale`: clamped to `1..=8`
+- `font.scale`: clamped to the configured scale range (default `1..=8`)
 - `terminal.rows`, `terminal.cols`, `terminal.tab_width`, `terminal.scrollback_lines`: minimum `1`
 - `terminal.scroll_speed`: if not finite or `<= 0`, reset to default (`3.0`)
 - `ui.toast.duration_ms`: maximum `60_000`
@@ -115,7 +115,12 @@ Notes:
 
 ### `[font]`
 
-- `scale` (f32): `1.0` - Font scale multiplier (1.0-8.0). Accepts decimals like 1.5, 2.25
+- `scale` (f32): `1.0` - Font scale multiplier (default 1.0-8.0). Accepts decimals like 1.5, 2.25
+
+Notes:
+
+- The default allowed font scale range is `1..=8`.
+- You can override that clamp range via `[experimental.font_scale_clamp]` (see below).
 
 ### `[pane]`
 
@@ -158,6 +163,20 @@ They don’t emit OSC sequences by themselves.
 - `debug_log` (bool): `false`
 
 ### `[interaction]`
+
+### `[experimental]`
+
+This section is intentionally unstable and may change.
+
+#### `[experimental.font_scale_clamp]`
+
+- `min` (f32): `1.0`
+- `max` (f32): `8.0`
+
+Notes:
+
+- This affects `[font].scale`, pane zoom, and UI font scales (tab bar/help/toast).
+- Values are additionally safety-clamped to `0.25..=64.0`.
 
 - `click_move_max_steps` (usize): `512`
 - `pane_resize_step` (float): `0.05`

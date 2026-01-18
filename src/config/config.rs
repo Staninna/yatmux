@@ -16,6 +16,8 @@ pub struct Config {
 
     pub ui: UiConfig,
     pub interaction: InteractionConfig,
+
+    pub experimental: ExperimentalConfig,
 }
 
 impl Default for Config {
@@ -31,16 +33,22 @@ impl Default for Config {
             keybinds: KeybindConfig::default(),
             ui: UiConfig::default(),
             interaction: InteractionConfig::default(),
+            experimental: ExperimentalConfig::default(),
         }
     }
 }
 
 impl Config {
+    pub fn font_scale_clamp(&self) -> (f32, f32) {
+        self.experimental.font_scale_clamp.normalized()
+    }
+
     pub fn apply_defaults(&mut self) {
         self.keybinds.apply_defaults();
 
         // Keep rendering/input assumptions intact.
-        self.font.scale = self.font.scale.clamp(1.0, 8.0);
+        let (scale_min, scale_max) = self.font_scale_clamp();
+        self.font.scale = self.font.scale.clamp(scale_min, scale_max);
 
         self.terminal.rows = self.terminal.rows.max(1);
         self.terminal.cols = self.terminal.cols.max(1);

@@ -38,7 +38,7 @@ impl Renderer {
     ) -> Result<()> {
         let cell_w = cell_w.max(1);
         let cell_h = cell_h.max(1);
-        let font_scale = font_scale.clamp(1.0, 8.0);
+        let font_scale = self.font_renderer.clamp_scale(font_scale);
 
         if region_w < cell_w || region_h < cell_h {
             return Ok(());
@@ -88,7 +88,7 @@ impl Renderer {
         let buffer_height = buffer.height().get() as usize;
         buffer.fill(style.base_bg);
 
-        let font_scale = font_scale.clamp(1.0, 8.0);
+        let font_scale = self.font_renderer.clamp_scale(font_scale);
         let (cell_w, cell_h) = self.font_renderer.cell_size(font_config);
 
         self.paint_terminal_region(
@@ -191,7 +191,7 @@ impl Renderer {
                 region_h,
                 cell_w,
                 cell_h,
-                font_scale.round() as usize,
+                font_scale,
                 view,
                 style,
                 font_config,

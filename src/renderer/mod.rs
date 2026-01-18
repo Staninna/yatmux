@@ -117,6 +117,7 @@ impl UiStyle {
         let bg = config.colors.background;
         let fg = config.colors.foreground;
         let accent = config.colors.accent;
+        let (scale_min, scale_max) = config.font_scale_clamp();
 
         let ui = &config.ui;
 
@@ -128,7 +129,11 @@ impl UiStyle {
             .inactive_tab_background
             .unwrap_or(darken(bg, 0.08));
         let tab_inactive_text = ui.tab_bar.inactive_text.unwrap_or(darken(fg, 0.35));
-        let tab_font_scale = ui.tab_bar.font_scale.unwrap_or(2.0).clamp(1.0, 8.0);
+        let tab_font_scale = ui
+            .tab_bar
+            .font_scale
+            .unwrap_or(2.0)
+            .clamp(scale_min, scale_max);
 
         // Dividers / pane borders
         // Default is subtle but visible; override via `[ui.dividers].color`.
@@ -146,13 +151,20 @@ impl UiStyle {
         let help_bg = ui.help.background.unwrap_or(darken(bg, 0.22));
         let help_text = ui.help.text.unwrap_or(fg);
         let help_footer_text = ui.help.footer_text.unwrap_or(darken(fg, 0.45));
-        let help_font_scale_max = ui.help.font_scale.unwrap_or(8.0).clamp(1.0, 8.0);
+        let help_font_scale_max = ui
+            .help
+            .font_scale
+            .unwrap_or(8.0)
+            .clamp(scale_min, scale_max);
 
         // Toast
         let toast_bg = ui.toast.background.unwrap_or(darken(bg, 0.22));
         let toast_text = ui.toast.text.unwrap_or(fg);
         let toast_border = ui.toast.border.unwrap_or(darken(fg, 0.70));
-        let toast_font_scale_override = ui.toast.font_scale.map(|s| s.clamp(1.0, 8.0));
+        let toast_font_scale_override = ui
+            .toast
+            .font_scale
+            .map(|s| s.clamp(scale_min, scale_max));
         let toast_font_scale_max = toast_font_scale_override.unwrap_or(help_font_scale_max);
 
         // Sticky prompt

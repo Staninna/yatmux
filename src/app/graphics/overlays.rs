@@ -180,7 +180,7 @@ impl App {
                 buffer_height as usize,
                 input,
                 cursor_pos,
-                font_scale.round() as usize,
+                font_scale,
                 ui_style,
                 font_config,
             );
@@ -195,7 +195,7 @@ impl App {
                 menu_x,
                 menu_y,
                 items,
-                font_scale.round() as usize,
+                font_scale,
                 ui_style,
                 font_config,
             );

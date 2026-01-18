@@ -86,7 +86,7 @@ pub struct App {
 impl App {
     /// Creates a new application with the given configuration.
     pub fn new(config: Config) -> Self {
-        App {
+        let mut app = App {
             config,
             tabs: Vec::new(),
             active_tab: 0,
@@ -107,7 +107,9 @@ impl App {
             last_window_title: None,
             toast: None,
             context_menu: None,
-        }
+        };
+        app.sync_font_scale_clamp();
+        app
     }
 
     /// Sets the event loop proxy for sending custom events.
@@ -157,6 +159,7 @@ impl App {
 
     fn reload_config(&mut self) {
         self.config = Config::load();
+        self.sync_font_scale_clamp();
 
         // Update palette immediately for ANSI colors/themes.
         if let Some(graphics) = &mut self.graphics {
@@ -173,6 +176,13 @@ impl App {
         self.layout_dirty = true;
         self.show_toast("Config reloaded");
         self.request_redraw();
+    }
+
+    fn sync_font_scale_clamp(&self) {
+        let (scale_min, scale_max) = self.config.font_scale_clamp();
+        self.renderer
+            .font_renderer
+            .set_scale_clamp(scale_min, scale_max);
     }
 
     /// Returns the URL at the current cursor position, if any.

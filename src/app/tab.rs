@@ -139,7 +139,7 @@ impl Tab {
             Pane {
                 terminal,
                 view: TerminalView::new(),
-                scale: scale.clamp(1.0, 8.0),
+                scale: scale.clamp(0.25, 64.0),
                 shell_title: None,
                 shell_cwd: None,
                 shell_integration: Default::default(),

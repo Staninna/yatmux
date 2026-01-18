@@ -22,7 +22,7 @@ impl Renderer {
         let clip_right = (origin_x + region_w).min(width);
         let clip_bottom = (origin_y + region_h).min(height);
 
-        let font_scale = font_scale.clamp(1.0, 8.0).round() as usize;
+        let font_scale = self.font_renderer.quantize_scale(font_scale);
 
         for gy in 0..GLYPH_H {
             let bits = glyph[gy];

@@ -25,7 +25,7 @@ pub fn paint_help_overlay(
     padding_cells_x: usize,
     padding_cells_y: usize,
 ) -> (usize, usize) {
-    let font_scale = font_scale.clamp(1.0, 8.0).round() as usize;
+    let font_scale = font_scale.clamp(0.25, 64.0).round().max(1.0) as usize;
     let cell_w = 8 * font_scale;
     let cell_h = 8 * font_scale;
 
