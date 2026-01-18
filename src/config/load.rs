@@ -303,7 +303,8 @@ impl Config {
 
         out.push_str("[ui.help]\n");
         out.push_str("# padding_x_cells = 2\n");
-        out.push_str("# padding_y_cells = 1\n\n");
+        out.push_str("# padding_y_cells = 1\n");
+        out.push_str("# font_scale = 2 # Preferred help overlay font scale (1-8)\n\n");
 
         out.push_str("[ui.dividers]\n");
         out.push_str("# Pane borders + split lines.\n");

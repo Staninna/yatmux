@@ -7,6 +7,8 @@ This page covers day-to-day usage that isn’t purely “edit the config”.
 - Toggle help: `ctrl+shift+/`
 - When the help overlay is open:
   - Scroll with mouse wheel, `up/down`, `pageup/pagedown`, `home/end`.
+- The help overlay uses two columns when there is enough horizontal space.
+- The help overlay auto-scales to the largest readable size; override with `[ui.help].font_scale`.
 - If shell integration isn’t detected, the help footer points you at `scripts/shell/yatmux.bash`.
 
 ## Rendering

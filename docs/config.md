@@ -200,6 +200,7 @@ UI colors are optional. If a color is omitted, yatmux derives it from base color
 
 - `padding_x_cells` (usize): `2`
 - `padding_y_cells` (usize): `1`
+- `font_scale` (usize | omitted): omitted (preferred help overlay scale, clamped to `1..=8`)
 - `background` (color | omitted): omitted
 - `text` (color | omitted): omitted
 - `footer_text` (color | omitted): omitted

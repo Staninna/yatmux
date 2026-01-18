@@ -16,6 +16,7 @@ impl App {
         accent_color: u32,
         font_scale: usize,
         ui_style: &UiStyle,
+        font_config: &yatmux::config::FontConfig,
     ) {
         // Calculate shell integration status before taking the graphics borrow
         let shell_integration_detected = self
@@ -165,6 +166,8 @@ impl App {
                 font_scale,
                 shell_integration_detected,
                 ui_style,
+                font_config,
+                &self.config.ui.help,
             );
             self.help_scroll = scroll;
             self.help_max_scroll = max_scroll;
@@ -180,6 +183,7 @@ impl App {
                 cursor_pos,
                 font_scale,
                 ui_style,
+                font_config,
             );
         }
 
@@ -194,6 +198,7 @@ impl App {
                 items,
                 font_scale,
                 ui_style,
+                font_config,
             );
         }
 
@@ -206,6 +211,7 @@ impl App {
                 message,
                 font_scale,
                 ui_style,
+                font_config,
             );
         }
 

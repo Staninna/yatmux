@@ -176,6 +176,7 @@ impl Default for UiToastConfig {
 pub struct UiHelpConfig {
     pub padding_x_cells: usize,
     pub padding_y_cells: usize,
+    pub font_scale: Option<usize>,
     #[serde(
         with = "hex_color_opt",
         default,
@@ -201,6 +202,7 @@ impl Default for UiHelpConfig {
         Self {
             padding_x_cells: 2,
             padding_y_cells: 1,
+            font_scale: None,
             background: None,
             text: None,
             footer_text: None,
