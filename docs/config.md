@@ -115,7 +115,7 @@ Notes:
 
 ### `[font]`
 
-- `scale` (usize): `2` (clamped to `1..=8`)
+- `scale` (f32): `1.0` - Font scale multiplier (1.0-8.0). Accepts decimals like 1.5, 2.25
 
 ### `[pane]`
 
@@ -176,7 +176,7 @@ UI colors are optional. If a color is omitted, yatmux derives it from base color
 - `vertical_padding_px` (usize): `8` - Vertical padding above and below tab text (increases tab bar height)
 - `tab_internal_padding_px` (usize): `16` - Horizontal padding on each side of tab text (total = 2× this value)
 - `min_height_cells` (usize | omitted): omitted - Optional minimum tab bar height in character cells
-- `font_scale` (usize | omitted): `2` - Tab text font scale (1-8). Default is 2 for better readability. Independent from global `[font].scale`
+- `font_scale` (f32 | omitted): `2.0` - Tab text font scale (1.0-8.0, accepts decimals). Default is 2.0 for better readability. Independent from global `[font].scale`
 - `background` (color | omitted): omitted
 - `border` (color | omitted): omitted
 - `inactive_tab_background` (color | omitted): omitted
@@ -203,7 +203,7 @@ gap_px = 6                      # Slightly wider gaps between tabs
 #### `[ui.toast]`
 
 - `duration_ms` (u64): `1500`
-- `font_scale` (usize | omitted): omitted (auto-scale up to the help overlay font scale, clamped to `1..=8`)
+- `font_scale` (f32 | omitted): omitted (auto-scale up to the help overlay font scale, 1.0-8.0, accepts decimals)
 - `bottom_margin_cells` (usize): `2`
 - `background` (color | omitted): omitted
 - `text` (color | omitted): omitted
@@ -213,7 +213,7 @@ gap_px = 6                      # Slightly wider gaps between tabs
 
 - `padding_x_cells` (usize): `2`
 - `padding_y_cells` (usize): `1`
-- `font_scale` (usize | omitted): omitted (preferred help overlay scale, clamped to `1..=8`)
+- `font_scale` (f32 | omitted): `8.0` - Help overlay font scale (1.0-8.0, accepts decimals)
 - `background` (color | omitted): omitted
 - `text` (color | omitted): omitted
 - `footer_text` (color | omitted): omitted

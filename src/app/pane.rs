@@ -111,7 +111,7 @@ impl ShadowPrompt {
 pub struct Pane {
     pub terminal: Terminal,
     pub view: TerminalView,
-    pub scale: usize,
+    pub scale: f32,
 
     pub shell_title: Option<String>,
     pub shell_cwd: Option<String>,

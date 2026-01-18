@@ -69,7 +69,7 @@ pub struct UiStyle {
     pub tab_vertical_padding_px: usize,
     pub tab_internal_padding_px: usize,
     pub tab_min_height_cells: Option<usize>,
-    pub tab_font_scale: usize,
+    pub tab_font_scale: f32,
 
     pub divider: u32,
 
@@ -86,14 +86,14 @@ pub struct UiStyle {
     pub help_footer_text: u32,
     pub help_padding_x_cells: usize,
     pub help_padding_y_cells: usize,
-    pub help_font_scale_max: usize,
+    pub help_font_scale_max: f32,
 
     pub toast_bg: u32,
     pub toast_text: u32,
     pub toast_border: u32,
     pub toast_bottom_margin_cells: usize,
-    pub toast_font_scale_override: Option<usize>,
-    pub toast_font_scale_max: usize,
+    pub toast_font_scale_override: Option<f32>,
+    pub toast_font_scale_max: f32,
 
     pub sticky_prompt_bg: u32,
     pub sticky_prompt_separator: u32,
@@ -128,7 +128,7 @@ impl UiStyle {
             .inactive_tab_background
             .unwrap_or(darken(bg, 0.08));
         let tab_inactive_text = ui.tab_bar.inactive_text.unwrap_or(darken(fg, 0.35));
-        let tab_font_scale = ui.tab_bar.font_scale.unwrap_or(2).clamp(1, 8);
+        let tab_font_scale = ui.tab_bar.font_scale.unwrap_or(2.0).clamp(1.0, 8.0);
 
         // Dividers / pane borders
         // Default is subtle but visible; override via `[ui.dividers].color`.
@@ -146,13 +146,13 @@ impl UiStyle {
         let help_bg = ui.help.background.unwrap_or(darken(bg, 0.22));
         let help_text = ui.help.text.unwrap_or(fg);
         let help_footer_text = ui.help.footer_text.unwrap_or(darken(fg, 0.45));
-        let help_font_scale_max = ui.help.font_scale.unwrap_or(8).clamp(1, 8);
+        let help_font_scale_max = ui.help.font_scale.unwrap_or(8.0).clamp(1.0, 8.0);
 
         // Toast
         let toast_bg = ui.toast.background.unwrap_or(darken(bg, 0.22));
         let toast_text = ui.toast.text.unwrap_or(fg);
         let toast_border = ui.toast.border.unwrap_or(darken(fg, 0.70));
-        let toast_font_scale_override = ui.toast.font_scale.map(|s| s.clamp(1, 8));
+        let toast_font_scale_override = ui.toast.font_scale.map(|s| s.clamp(1.0, 8.0));
         let toast_font_scale_max = toast_font_scale_override.unwrap_or(help_font_scale_max);
 
         // Sticky prompt

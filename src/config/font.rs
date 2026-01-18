@@ -8,7 +8,7 @@ pub struct FontConfig {
     #[serde(default = "default_size")]
     pub size: f32,
     #[serde(default = "default_scale")]
-    pub scale: usize,
+    pub scale: f32,
     #[serde(default)]
     pub weight: FontWeight,
     #[serde(default)]
@@ -23,8 +23,8 @@ fn default_size() -> f32 {
     14.0
 }
 
-fn default_scale() -> usize {
-    1
+fn default_scale() -> f32 {
+    1.0
 }
 
 impl Default for FontConfig {
@@ -75,6 +75,6 @@ impl Default for FontSlant {
 
 impl FontConfig {
     pub fn scaled_size(&self) -> f32 {
-        self.size * self.scale as f32
+        self.size * self.scale
     }
 }

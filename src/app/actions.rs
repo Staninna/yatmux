@@ -333,8 +333,13 @@ impl App {
             return;
         };
 
-        let new_scale = (pane.scale as isize + delta).clamp(1, 8) as usize;
-        if new_scale == pane.scale {
+        // Use fixed 0.25 increments
+        let new_scale = if delta > 0 {
+            (pane.scale + 0.25).clamp(1.0, 8.0)
+        } else {
+            (pane.scale - 0.25).clamp(1.0, 8.0)
+        };
+        if (new_scale - pane.scale).abs() < 0.01 {
             return;
         }
 
@@ -346,7 +351,7 @@ impl App {
 
     /// Resets the focused pane's zoom to the default scale.
     fn zoom_reset_focused(&mut self) {
-        let new_scale = self.config.font.scale.clamp(1, 8);
+        let new_scale = self.config.font.scale.clamp(1.0, 8.0);
 
         let Some(pane) = self.focused_pane_mut() else {
             return;

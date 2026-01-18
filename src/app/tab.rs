@@ -114,7 +114,7 @@ impl Tab {
     pub fn spawn_pane(
         &mut self,
         id: PaneId,
-        scale: usize,
+        scale: f32,
         scrollback_lines: usize,
         event_proxy: Option<&EventLoopProxy<AppEvent>>,
         tab_id: TabId,
@@ -139,7 +139,7 @@ impl Tab {
             Pane {
                 terminal,
                 view: TerminalView::new(),
-                scale: scale.clamp(1, 8),
+                scale: scale.clamp(1.0, 8.0),
                 shell_title: None,
                 shell_cwd: None,
                 shell_integration: Default::default(),
@@ -153,7 +153,7 @@ impl Tab {
     /// Spawns the initial pane for this tab.
     pub fn spawn_initial_pane(
         &mut self,
-        scale: usize,
+        scale: f32,
         scrollback_lines: usize,
         event_proxy: Option<&EventLoopProxy<AppEvent>>,
         shadow_prompt_enabled: bool,
@@ -176,7 +176,7 @@ impl Tab {
     pub fn split_focused(
         &mut self,
         dir: SplitDir,
-        default_scale: usize,
+        default_scale: f32,
         scrollback_lines: usize,
         event_proxy: Option<&EventLoopProxy<AppEvent>>,
         current_rect: Option<Rect>,

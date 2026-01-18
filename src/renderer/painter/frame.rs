@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use log::debug;
 use softbuffer::Surface;
 use vt100::Color;
 
@@ -30,7 +29,7 @@ impl Renderer {
         region_h: usize,
         cell_w: usize,
         cell_h: usize,
-        font_scale: usize,
+        font_scale: f32,
         terminal: &Terminal,
         palette: &Arc<[u32; 256]>,
         view: &mut TerminalView,
@@ -39,7 +38,7 @@ impl Renderer {
     ) -> Result<()> {
         let cell_w = cell_w.max(1);
         let cell_h = cell_h.max(1);
-        let font_scale = font_scale.clamp(1, 8);
+        let font_scale = font_scale.clamp(1.0, 8.0);
 
         if region_w < cell_w || region_h < cell_h {
             return Ok(());
@@ -77,7 +76,7 @@ impl Renderer {
         terminal: &Terminal,
         palette: &Arc<[u32; 256]>,
         view: &mut TerminalView,
-        font_scale: usize,
+        font_scale: f32,
         style: &UiStyle,
         font_config: &FontConfig,
     ) -> Result<()> {
@@ -89,7 +88,7 @@ impl Renderer {
         let buffer_height = buffer.height().get() as usize;
         buffer.fill(style.base_bg);
 
-        let font_scale = font_scale.clamp(1, 8);
+        let font_scale = font_scale.clamp(1.0, 8.0);
         let (cell_w, cell_h) = self.font_renderer.cell_size(font_config);
 
         self.paint_terminal_region(
@@ -128,7 +127,7 @@ impl Renderer {
         region_h: usize,
         cell_w: usize,
         cell_h: usize,
-        font_scale: usize,
+        font_scale: f32,
         frame: &RenderFrame,
         palette: &[u32; 256],
         view: &TerminalView,
@@ -192,7 +191,7 @@ impl Renderer {
                 region_h,
                 cell_w,
                 cell_h,
-                font_scale,
+                font_scale.round() as usize,
                 view,
                 style,
                 font_config,
@@ -212,7 +211,7 @@ impl Renderer {
         region_h: usize,
         cell_w: usize,
         cell_h: usize,
-        font_scale: usize,
+        font_scale: f32,
         row: usize,
         col: usize,
         ch: char,

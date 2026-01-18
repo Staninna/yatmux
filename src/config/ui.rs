@@ -41,7 +41,7 @@ pub struct UiTabBarConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_height_cells: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub font_scale: Option<usize>,
+    pub font_scale: Option<f32>,
 
     #[serde(
         with = "hex_color_opt",
@@ -148,7 +148,7 @@ impl Default for UiSearchConfig {
 #[serde(default)]
 pub struct UiToastConfig {
     pub duration_ms: u64,
-    pub font_scale: Option<usize>,
+    pub font_scale: Option<f32>,
     #[serde(
         with = "hex_color_opt",
         default,
@@ -188,7 +188,7 @@ impl Default for UiToastConfig {
 pub struct UiHelpConfig {
     pub padding_x_cells: usize,
     pub padding_y_cells: usize,
-    pub font_scale: Option<usize>,
+    pub font_scale: Option<f32>,
     #[serde(
         with = "hex_color_opt",
         default,

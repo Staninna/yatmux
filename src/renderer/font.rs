@@ -113,7 +113,7 @@ impl FontRenderer {
         font_config: &FontConfig,
     ) -> Result<Option<Arc<RenderedGlyph>>, String> {
         let family = &font_config.family;
-        let scale_factor = font_config.scale.clamp(1, 8) as f32;
+        let scale_factor = font_config.scale.clamp(1.0, 8.0);
         let scaled_size = font_config.size * scale_factor;
         let size_key = (scaled_size * 100.0).round().max(1.0) as u32;
 
@@ -182,7 +182,7 @@ impl FontRenderer {
     }
 
     pub fn cell_size(&self, font_config: &FontConfig) -> (usize, usize) {
-        let scale = font_config.scale.clamp(1, 8) as f32;
+        let scale = font_config.scale.clamp(1.0, 8.0);
         let scaled_size = font_config.size * scale;
         let font = self.load_font_by_name(&font_config.family);
         let rt_scale = Scale::uniform(scaled_size);
@@ -204,7 +204,7 @@ impl FontRenderer {
     }
 
     pub fn baseline_offset(&self, font_config: &FontConfig) -> i32 {
-        let scale = font_config.scale.clamp(1, 8) as f32;
+        let scale = font_config.scale.clamp(1.0, 8.0);
         let scaled_size = font_config.size * scale;
         let font = self.load_font_by_name(&font_config.family);
         let metrics = font.v_metrics(Scale::uniform(scaled_size));
@@ -220,7 +220,7 @@ impl FontRenderer {
     /// Used for consistent top-alignment of glyphs in terminal cells.
     pub fn max_bearing_y(&self, font_config: &FontConfig) -> i32 {
         let font = self.load_font_by_name(&font_config.family);
-        let scale = Scale::uniform(font_config.size * font_config.scale.clamp(1, 8) as f32);
+        let scale = Scale::uniform(font_config.size * font_config.scale.clamp(1.0, 8.0));
 
         let mut max_bearing = 0i32;
         // Measure all printable ASCII to find the tallest glyph

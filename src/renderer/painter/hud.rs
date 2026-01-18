@@ -19,7 +19,7 @@ impl Renderer {
         let text_len = message.chars().count().max(1);
         let (font_scale, cell_w, cell_h) =
             if let Some(override_scale) = style.toast_font_scale_override {
-                let scale = override_scale.clamp(1, 8);
+                let scale = override_scale.clamp(1.0, 8.0);
                 let mut probe_font = font_config.clone();
                 probe_font.scale = scale;
                 let (cw, ch) = self.font_renderer.cell_size(&probe_font);
@@ -136,15 +136,18 @@ impl Renderer {
     fn choose_toast_scale(
         &mut self,
         message_len: usize,
-        max_scale: usize,
+        max_scale: f32,
         bottom_margin_cells: usize,
         buffer_width: usize,
         buffer_height: usize,
         font_config: &FontConfig,
-    ) -> (usize, usize, usize) {
-        let max_scale = max_scale.max(1);
+    ) -> (f32, usize, usize) {
+        let max_scale = max_scale.max(1.0);
         let max_allowed_width = buffer_width.saturating_sub(buffer_width / 4); // keep toast narrower
-        for scale in (1..=max_scale).rev() {
+
+        // Try scales from max down to 1.0 in 0.25 steps
+        let mut scale = max_scale;
+        while scale >= 1.0 {
             let mut probe_font = font_config.clone();
             probe_font.scale = scale;
             let (cell_w, cell_h) = self.font_renderer.cell_size(&probe_font);
@@ -161,12 +164,14 @@ impl Renderer {
             if toast_width <= max_allowed_width && toast_height + margin_height <= buffer_height {
                 return (scale, cell_w, cell_h);
             }
+
+            scale -= 0.25;
         }
 
         let mut probe_font = font_config.clone();
-        probe_font.scale = 1;
+        probe_font.scale = 1.0;
         let (cell_w, cell_h) = self.font_renderer.cell_size(&probe_font);
-        (1, cell_w.max(1), cell_h.max(1))
+        (1.0, cell_w.max(1), cell_h.max(1))
     }
 
     /// Paints a context menu at the specified position.
@@ -297,7 +302,7 @@ impl Renderer {
                         0,
                         buffer_width,
                         buffer_height,
-                        font_scale,
+                        font_scale as f32,
                         x,
                         text_y,
                         glyph,
@@ -433,20 +438,20 @@ impl Renderer {
                 );
             } else {
                 let glyph = font::get_bitmap_glyph(ch);
-                self.draw_glyph(
-                    buffer,
-                    buffer_width,
-                    buffer_height,
-                    0,
-                    0,
-                    buffer_width,
-                    buffer_height,
-                    font_scale,
-                    x,
-                    text_y,
-                    glyph,
-                    prompt_color,
-                );
+                    self.draw_glyph(
+                        buffer,
+                        buffer_width,
+                        buffer_height,
+                        0,
+                        0,
+                        buffer_width,
+                        buffer_height,
+                        font_scale as f32,
+                        x,
+                        text_y,
+                        glyph,
+                        prompt_color,
+                    );
             }
         }
 
@@ -475,20 +480,20 @@ impl Renderer {
                 );
             } else {
                 let glyph = font::get_bitmap_glyph(ch);
-                self.draw_glyph(
-                    buffer,
-                    buffer_width,
-                    buffer_height,
-                    0,
-                    0,
-                    buffer_width,
-                    buffer_height,
-                    font_scale,
-                    x,
-                    text_y,
-                    glyph,
-                    fg_color,
-                );
+                    self.draw_glyph(
+                        buffer,
+                        buffer_width,
+                        buffer_height,
+                        0,
+                        0,
+                        buffer_width,
+                        buffer_height,
+                        font_scale as f32,
+                        x,
+                        text_y,
+                        glyph,
+                        fg_color,
+                    );
             }
         }
 
@@ -537,7 +542,7 @@ impl Renderer {
                         0,
                         buffer_width,
                         buffer_height,
-                        font_scale,
+                        font_scale as f32,
                         cursor_x,
                         text_y,
                         glyph,

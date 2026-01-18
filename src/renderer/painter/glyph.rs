@@ -13,7 +13,7 @@ impl Renderer {
         origin_y: usize,
         region_w: usize,
         region_h: usize,
-        font_scale: usize,
+        font_scale: f32,
         x0: usize,
         y0: usize,
         glyph: [u8; 8],
@@ -22,7 +22,7 @@ impl Renderer {
         let clip_right = (origin_x + region_w).min(width);
         let clip_bottom = (origin_y + region_h).min(height);
 
-        let font_scale = font_scale.clamp(1, 8);
+        let font_scale = font_scale.clamp(1.0, 8.0).round() as usize;
 
         for gy in 0..GLYPH_H {
             let bits = glyph[gy];

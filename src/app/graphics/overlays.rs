@@ -14,7 +14,7 @@ impl App {
         tab_bar_height: usize,
         dividers: &[Divider],
         accent_color: u32,
-        font_scale: usize,
+        font_scale: f32,
         ui_style: &UiStyle,
         font_config: &yatmux::config::FontConfig,
     ) {
@@ -180,7 +180,7 @@ impl App {
                 buffer_height as usize,
                 input,
                 cursor_pos,
-                font_scale,
+                font_scale.round() as usize,
                 ui_style,
                 font_config,
             );
@@ -195,7 +195,7 @@ impl App {
                 menu_x,
                 menu_y,
                 items,
-                font_scale,
+                font_scale.round() as usize,
                 ui_style,
                 font_config,
             );

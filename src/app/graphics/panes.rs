@@ -12,7 +12,7 @@ pub(super) struct PaneRenderData {
     pub(super) id: PaneId,
     pub(super) rect: Rect,
     pub(super) content_rect: Rect, // Inner rect after padding
-    pub(super) scale: usize,
+    pub(super) scale: f32,
     pub(super) is_focused: bool,
 }
 
@@ -75,7 +75,8 @@ impl App {
     ) {
         for pane_render in pane_data {
             let mut pane_font_config = self.config.font.clone();
-            pane_font_config.scale = pane_render.scale;
+            let pane_scale = pane_render.scale.clamp(1.0, 8.0);
+            pane_font_config.scale = pane_scale;
             let (cell_w, cell_h) = self.renderer.font_renderer.cell_size(&pane_font_config);
             if cell_w == 0 || cell_h == 0 {
                 continue;
@@ -114,7 +115,7 @@ impl App {
                 pane_render.content_rect.h,
                 cell_w,
                 cell_h,
-                pane_render.scale,
+                pane_scale,
                 &pane.terminal,
                 palette,
                 &mut pane.view,
@@ -140,7 +141,7 @@ impl App {
                         pane_render.content_rect.h,
                         cell_w,
                         cell_h,
-                        pane_render.scale,
+                        pane_scale.round() as usize,
                         &prompt_info.rows,
                         prompt_info.cursor,
                         palette,

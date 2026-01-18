@@ -40,7 +40,7 @@ impl Config {
         self.keybinds.apply_defaults();
 
         // Keep rendering/input assumptions intact.
-        self.font.scale = self.font.scale.clamp(1, 8);
+        self.font.scale = self.font.scale.clamp(1.0, 8.0);
 
         self.terminal.rows = self.terminal.rows.max(1);
         self.terminal.cols = self.terminal.cols.max(1);

@@ -17,7 +17,7 @@ pub fn paint_help_overlay(
     sections: &[HelpSection],
     scroll_offset: usize,
     accent_color: u32,
-    font_scale: usize,
+    font_scale: f32,
     shell_integration_detected: bool,
     bg: u32,
     text_color: u32,
@@ -25,7 +25,7 @@ pub fn paint_help_overlay(
     padding_cells_x: usize,
     padding_cells_y: usize,
 ) -> (usize, usize) {
-    let font_scale = font_scale.clamp(1, 8);
+    let font_scale = font_scale.clamp(1.0, 8.0).round() as usize;
     let cell_w = 8 * font_scale;
     let cell_h = 8 * font_scale;
 

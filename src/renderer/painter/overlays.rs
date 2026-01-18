@@ -18,7 +18,7 @@ impl Renderer {
         sections: &[HelpSection],
         scroll_offset: usize,
         accent_color: u32,
-        _font_scale: usize,
+        _font_scale: f32,
         shell_integration_detected: bool,
         style: &UiStyle,
         font_config: &FontConfig,
@@ -73,13 +73,16 @@ impl Renderer {
 
         let content_max_len = blocks.iter().map(|block| block.max_len).max().unwrap_or(0);
         let gutter_cells = 4usize;
-        let max_scale = style.help_font_scale_max;
+        let max_scale = style
+            .help_font_scale_max
+            .clamp(1.0, 8.0)
+            .round() as usize;
         let mut selected_layout: Option<HelpLayout> = None;
         let mut fallback_layout: Option<HelpLayout> = None;
 
         for scale in (1..=max_scale).rev() {
             let mut probe_font = font_config.clone();
-            probe_font.scale = scale;
+            probe_font.scale = scale as f32;
             let (cell_w, cell_h) = self.font_renderer.cell_size(&probe_font);
             let available_cols = buffer_width / cell_w;
             let available_rows = buffer_height / cell_h;
@@ -133,7 +136,7 @@ impl Renderer {
         };
 
         let mut help_font = font_config.clone();
-        help_font.scale = layout.scale;
+        help_font.scale = layout.scale as f32;
 
         let cell_w = layout.cell_w;
         let cell_h = layout.cell_h;
@@ -727,7 +730,7 @@ impl Renderer {
                         origin_y,
                         region_w,
                         region_h,
-                        font_scale,
+                        font_scale as f32,
                         x0,
                         y0,
                         glyph,
@@ -805,7 +808,14 @@ impl Renderer {
             } else {
                 let glyph = font::get_bitmap_glyph(ch);
                 self.draw_glyph(
-                    buffer, width, height, origin_x, origin_y, region_w, region_h, font_scale,
+                    buffer,
+                    width,
+                    height,
+                    origin_x,
+                    origin_y,
+                    region_w,
+                    region_h,
+                    font_scale as f32,
                     x_pos, bar_y, glyph, text_color,
                 );
             }
@@ -836,7 +846,14 @@ impl Renderer {
             } else {
                 let glyph = font::get_bitmap_glyph(ch);
                 self.draw_glyph(
-                    buffer, width, height, origin_x, origin_y, region_w, region_h, font_scale,
+                    buffer,
+                    width,
+                    height,
+                    origin_x,
+                    origin_y,
+                    region_w,
+                    region_h,
+                    font_scale as f32,
                     x_pos, bar_y, glyph, text_color,
                 );
             }
@@ -909,7 +926,14 @@ impl Renderer {
             } else {
                 let glyph = font::get_bitmap_glyph(ch);
                 self.draw_glyph(
-                    buffer, width, height, origin_x, origin_y, region_w, region_h, font_scale,
+                    buffer,
+                    width,
+                    height,
+                    origin_x,
+                    origin_y,
+                    region_w,
+                    region_h,
+                    font_scale as f32,
                     x_pos, bar_y, glyph, info_color,
                 );
             }
