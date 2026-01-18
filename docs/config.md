@@ -169,14 +169,26 @@ UI colors are optional. If a color is omitted, yatmux derives it from base color
 
 #### `[ui.tab_bar]`
 
-- `gap_px` (usize): `4`
-- `side_padding_px` (usize): `8`
-- `max_width_cells` (usize): `12`
-- `max_width_px_extra` (usize): `16`
+- `gap_px` (usize): `4` - Space between tabs in pixels
+- `side_padding_px` (usize): `8` - Padding on left and right edges of tab bar
+- `max_width_cells` (usize): `12` - Maximum tab width in character cells
+- `max_width_px_extra` (usize): `16` - Additional pixels on top of cell width
+- `vertical_padding_px` (usize): `8` - Vertical padding above and below tab text (increases tab bar height)
+- `tab_internal_padding_px` (usize): `16` - Horizontal padding on each side of tab text (total = 2× this value)
+- `min_height_cells` (usize | omitted): omitted - Optional minimum tab bar height in character cells
+- `font_scale` (usize | omitted): `2` - Tab text font scale (1-8). Default is 2 for better readability. Independent from global `[font].scale`
 - `background` (color | omitted): omitted
 - `border` (color | omitted): omitted
 - `inactive_tab_background` (color | omitted): omitted
 - `inactive_text` (color | omitted): omitted
+
+**Example: Custom tab padding**
+```toml
+[ui.tab_bar]
+vertical_padding_px = 10        # More vertical breathing room
+tab_internal_padding_px = 20    # More horizontal padding within tabs (40px total)
+gap_px = 6                      # Slightly wider gaps between tabs
+```
 
 #### `[ui.search]`
 

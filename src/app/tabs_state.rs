@@ -1,4 +1,5 @@
 use super::*;
+use yatmux::renderer::UiStyle;
 
 impl App {
     pub fn pane_rects(
@@ -24,8 +25,21 @@ impl App {
 
     pub fn tab_bar_height(&self) -> usize {
         if self.tabs.len() > 1 {
-            let (_, cell_h) = self.renderer.font_renderer.cell_size(&self.config.font);
-            cell_h + 4 // cell height + padding
+            let style = UiStyle::from_config(&self.config);
+
+            // Create tab-specific font config with scaled font
+            let mut tab_font_config = self.config.font.clone();
+            tab_font_config.scale = style.tab_font_scale;
+
+            let (_, cell_h) = self.renderer.font_renderer.cell_size(&tab_font_config);
+
+            let height_from_padding = cell_h + style.tab_vertical_padding_px;
+            let height_from_cells = style
+                .tab_min_height_cells
+                .map(|cells| cells * cell_h)
+                .unwrap_or(0);
+
+            height_from_padding.max(height_from_cells)
         } else {
             0
         }

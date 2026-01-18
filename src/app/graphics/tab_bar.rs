@@ -14,12 +14,15 @@ impl App {
         tabs: &[(String, bool)],
         bg_color: u32,
         accent_color: u32,
-        font_scale: usize,
         style: &UiStyle,
         font_renderer: &mut FontRenderer,
         font_config: &FontConfig,
     ) {
-        let (cell_w, cell_h) = font_renderer.cell_size(font_config);
+        // Create tab-specific font config
+        let mut tab_font_config = font_config.clone();
+        tab_font_config.scale = style.tab_font_scale;
+
+        let (cell_w, cell_h) = font_renderer.cell_size(&tab_font_config);
 
         // Background
         let tab_bar_bg = style.tab_bar_bg;
@@ -48,7 +51,8 @@ impl App {
         let available_width = buffer_width.saturating_sub(total_gap_width);
         let tab_width = (available_width / num_tabs)
             .min(cell_w * style.tab_max_width_cells + style.tab_max_width_px_extra);
-        let max_title_chars = (tab_width.saturating_sub(16)) / cell_w; // Account for padding
+        let max_title_chars =
+            (tab_width.saturating_sub(style.tab_internal_padding_px * 2)) / cell_w;
 
         let mut x_offset = side_padding;
 
@@ -67,7 +71,7 @@ impl App {
             } else {
                 (x_offset + tab_width).min(buffer_width)
             };
-            let tab_y0 = 2;
+            let tab_y0 = style.tab_vertical_padding_px / 2;
             let tab_y1 = tab_bar_height.saturating_sub(1);
 
             for y in tab_y0..tab_y1 {
@@ -106,16 +110,51 @@ impl App {
             let text_x = tab_x0 + (tab_content_width.saturating_sub(title_pixel_width)) / 2;
             let text_y = (tab_bar_height - cell_h) / 2;
 
-            Self::draw_text_static(
-                buffer,
-                buffer_width,
-                text_x,
-                text_y,
-                &display_title,
-                text_color,
-                font_renderer,
-                font_config,
-            );
+            // Draw text with proper alpha blending
+            let baseline_offset = font_renderer.baseline_offset(&tab_font_config);
+            let mut char_x = text_x;
+
+            for ch in display_title.chars() {
+                if let Ok(Some(tt_glyph)) = font_renderer.get_glyph(ch, &tab_font_config) {
+                    let glyph_y = text_y
+                        .saturating_add(baseline_offset as usize)
+                        .saturating_sub(tt_glyph.bearing_y as usize);
+
+                    // Use proper alpha blending
+                    Self::draw_glyph_with_alpha(
+                        buffer,
+                        buffer_width,
+                        tab_bar_height,
+                        char_x,
+                        glyph_y,
+                        &tt_glyph.pixels,
+                        tt_glyph.width,
+                        tt_glyph.height,
+                        text_color,
+                    );
+                } else {
+                    // Bitmap fallback
+                    let glyph = get_bitmap_glyph(ch);
+                    let bitmap_scale = (cell_h / 8).max(1);
+                    for gy in 0..8 {
+                        let bits = glyph[gy];
+                        for gx in 0..8 {
+                            if (bits >> gx) & 1 == 1 {
+                                for sy in 0..bitmap_scale {
+                                    for sx in 0..bitmap_scale {
+                                        let px = char_x + gx * bitmap_scale + sx;
+                                        let py = text_y + gy * bitmap_scale + sy;
+                                        if px < buffer_width && py < text_y + tab_bar_height {
+                                            buffer[py * buffer_width + px] = text_color;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                char_x += cell_w;
+            }
 
             x_offset = tab_x1 + tab_gap;
 
@@ -125,67 +164,61 @@ impl App {
         }
     }
 
-    /// Draws text at the given position using TrueType fonts with bitmap fallback.
-    fn draw_text_static(
+    /// Helper to draw a glyph with proper alpha blending
+    fn draw_glyph_with_alpha(
         buffer: &mut [u32],
         buffer_width: usize,
-        x: usize,
-        y: usize,
-        text: &str,
+        max_height: usize,
+        x0: usize,
+        y0: usize,
+        glyph_data: &[u8],
+        glyph_width: usize,
+        glyph_height: usize,
         color: u32,
-        font_renderer: &mut FontRenderer,
-        font_config: &FontConfig,
     ) {
-        let (cell_w, cell_h) = font_renderer.cell_size(font_config);
-        let baseline_offset = font_renderer.baseline_offset(font_config);
-        let fixed_bearing = font_renderer.max_bearing_y(font_config) as usize;
+        let (r, g, b) = (
+            ((color >> 16) & 0xFF) as u8,
+            ((color >> 8) & 0xFF) as u8,
+            (color & 0xFF) as u8,
+        );
 
-        let mut char_x = x;
-        for ch in text.chars() {
-            if let Ok(Some(tt_glyph)) = font_renderer.get_glyph(ch, font_config) {
-                // Position glyph at baseline
-                let glyph_y = y
-                    .saturating_add(baseline_offset as usize)
-                    .saturating_sub(fixed_bearing);
+        for gy in 0..glyph_height {
+            let y = y0 + gy;
+            if y >= max_height {
+                break;
+            }
 
-                // Draw at native size
-                for py in 0..tt_glyph.height {
-                    let y_pos = glyph_y + py;
-                    if y_pos >= y + cell_h {
-                        break;
-                    }
-                    for px in 0..tt_glyph.width {
-                        let x_pos = char_x + px;
-                        if x_pos >= buffer_width {
-                            break;
-                        }
-                        let alpha = tt_glyph.pixels[py * tt_glyph.width + px];
-                        if alpha > 0 {
-                            buffer[y_pos * buffer_width + x_pos] = color;
-                        }
-                    }
+            for gx in 0..glyph_width {
+                let x = x0 + gx;
+                if x >= buffer_width {
+                    break;
                 }
-            } else {
-                let glyph = get_bitmap_glyph(ch);
-                let bitmap_scale = (cell_h / 8).max(1);
-                for gy in 0..8 {
-                    let bits = glyph[gy];
-                    for gx in 0..8 {
-                        if (bits >> gx) & 1 == 1 {
-                            for sy in 0..bitmap_scale {
-                                for sx in 0..bitmap_scale {
-                                    let px = char_x + gx * bitmap_scale + sx;
-                                    let py = y + gy * bitmap_scale + sy;
-                                    if px < buffer_width && py < y + cell_h {
-                                        buffer[py * buffer_width + px] = color;
-                                    }
-                                }
-                            }
-                        }
+
+                let alpha = glyph_data[gy * glyph_width + gx];
+                if alpha > 0 {
+                    let buffer_idx = y * buffer_width + x;
+
+                    if alpha == 255 {
+                        buffer[buffer_idx] = color;
+                    } else {
+                        // Proper alpha blending
+                        let existing = buffer[buffer_idx];
+                        let (er, eg, eb) = (
+                            ((existing >> 16) & 0xFF) as u8,
+                            ((existing >> 8) & 0xFF) as u8,
+                            (existing & 0xFF) as u8,
+                        );
+
+                        let t = alpha as f32 / 255.0;
+                        let nr = (er as f32 + (r as f32 - er as f32) * t) as u8;
+                        let ng = (eg as f32 + (g as f32 - eg as f32) * t) as u8;
+                        let nb = (eb as f32 + (b as f32 - eb as f32) * t) as u8;
+
+                        buffer[buffer_idx] =
+                            ((nr as u32) << 16) | ((ng as u32) << 8) | (nb as u32);
                     }
                 }
             }
-            char_x += cell_w;
         }
     }
 }

@@ -291,7 +291,11 @@ impl Config {
         out.push_str("# gap_px = 4\n");
         out.push_str("# side_padding_px = 8\n");
         out.push_str("# max_width_cells = 12\n");
-        out.push_str("# max_width_px_extra = 16\n\n");
+        out.push_str("# max_width_px_extra = 16\n");
+        out.push_str("# vertical_padding_px = 8\n");
+        out.push_str("# tab_internal_padding_px = 16\n");
+        out.push_str("# min_height_cells = 2  # Optional: minimum height in character cells\n");
+        out.push_str("# font_scale = 2  # Tab text scale (1-8, default 2 for readability)\n\n");
 
         out.push_str("[ui.search]\n");
         out.push_str("# right_reserved_px = 100\n");

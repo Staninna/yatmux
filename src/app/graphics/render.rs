@@ -75,7 +75,6 @@ impl App {
                 &tab_info,
                 bg_color,
                 accent_color,
-                font_scale,
                 &ui_style,
                 &mut self.renderer.font_renderer,
                 &font_config,

@@ -147,7 +147,6 @@ impl App {
     }
 
     fn handle_tab_bar_click(&mut self) {
-        let (cell_w, _) = self.renderer.font_renderer.cell_size(&self.config.font);
         let buffer_width = self.last_buffer_size.0 as usize;
         let num_tabs = self.tabs.len();
 
@@ -157,6 +156,12 @@ impl App {
 
         // Use the same calculation as actual rendering
         let style = &yatmux::renderer::UiStyle::from_config(&self.config);
+
+        // Create tab-specific font config with scaled font
+        let mut tab_font_config = self.config.font.clone();
+        tab_font_config.scale = style.tab_font_scale;
+
+        let (cell_w, _) = self.renderer.font_renderer.cell_size(&tab_font_config);
         let tab_gap = style.tab_gap_px;
         let side_padding = style.tab_side_padding_px;
         let total_gap_width = tab_gap * (num_tabs.saturating_sub(1)) + side_padding * 2;

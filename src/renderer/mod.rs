@@ -66,6 +66,10 @@ pub struct UiStyle {
     pub tab_side_padding_px: usize,
     pub tab_max_width_cells: usize,
     pub tab_max_width_px_extra: usize,
+    pub tab_vertical_padding_px: usize,
+    pub tab_internal_padding_px: usize,
+    pub tab_min_height_cells: Option<usize>,
+    pub tab_font_scale: usize,
 
     pub divider: u32,
 
@@ -124,6 +128,7 @@ impl UiStyle {
             .inactive_tab_background
             .unwrap_or(darken(bg, 0.08));
         let tab_inactive_text = ui.tab_bar.inactive_text.unwrap_or(darken(fg, 0.35));
+        let tab_font_scale = ui.tab_bar.font_scale.unwrap_or(2).clamp(1, 8);
 
         // Dividers / pane borders
         // Default is subtle but visible; override via `[ui.dividers].color`.
@@ -188,6 +193,10 @@ impl UiStyle {
             tab_side_padding_px: ui.tab_bar.side_padding_px,
             tab_max_width_cells: ui.tab_bar.max_width_cells,
             tab_max_width_px_extra: ui.tab_bar.max_width_px_extra,
+            tab_vertical_padding_px: ui.tab_bar.vertical_padding_px,
+            tab_internal_padding_px: ui.tab_bar.tab_internal_padding_px,
+            tab_min_height_cells: ui.tab_bar.min_height_cells,
+            tab_font_scale,
 
             divider,
 
