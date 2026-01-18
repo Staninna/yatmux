@@ -13,13 +13,31 @@ impl Renderer {
         buffer_width: usize,
         buffer_height: usize,
         message: &str,
-        font_scale: usize,
         style: &UiStyle,
         font_config: &FontConfig,
     ) {
-        let (cell_w, cell_h) = self.font_renderer.cell_size(font_config);
+        let text_len = message.chars().count().max(1);
+        let (font_scale, cell_w, cell_h) =
+            if let Some(override_scale) = style.toast_font_scale_override {
+                let scale = override_scale.clamp(1, 8);
+                let mut probe_font = font_config.clone();
+                probe_font.scale = scale;
+                let (cw, ch) = self.font_renderer.cell_size(&probe_font);
+                (scale, cw.max(1), ch.max(1))
+            } else {
+                self.choose_toast_scale(
+                    text_len,
+                    style.toast_font_scale_max,
+                    style.toast_bottom_margin_cells,
+                    buffer_width,
+                    buffer_height,
+                    font_config,
+                )
+            };
 
-        let text_len = message.chars().count();
+        let mut toast_font_config = font_config.clone();
+        toast_font_config.scale = font_scale;
+
         let padding_x = cell_w;
         let padding_y = cell_h / 2;
 
@@ -79,8 +97,8 @@ impl Renderer {
             if x + cell_w > buffer_width {
                 break;
             }
-            if let Ok(Some(tt_glyph)) = self.font_renderer.get_glyph(ch, font_config) {
-                let baseline_offset = self.font_renderer.baseline_offset(font_config);
+            if let Ok(Some(tt_glyph)) = self.font_renderer.get_glyph(ch, &toast_font_config) {
+                let baseline_offset = self.font_renderer.baseline_offset(&toast_font_config);
                 let glyph_y = text_y
                     .saturating_add(baseline_offset as usize)
                     .saturating_sub(tt_glyph.bearing_y as usize);
@@ -113,6 +131,42 @@ impl Renderer {
                 );
             }
         }
+    }
+
+    fn choose_toast_scale(
+        &mut self,
+        message_len: usize,
+        max_scale: usize,
+        bottom_margin_cells: usize,
+        buffer_width: usize,
+        buffer_height: usize,
+        font_config: &FontConfig,
+    ) -> (usize, usize, usize) {
+        let max_scale = max_scale.max(1);
+        let max_allowed_width = buffer_width.saturating_sub(buffer_width / 4); // keep toast narrower
+        for scale in (1..=max_scale).rev() {
+            let mut probe_font = font_config.clone();
+            probe_font.scale = scale;
+            let (cell_w, cell_h) = self.font_renderer.cell_size(&probe_font);
+            if cell_w == 0 || cell_h == 0 {
+                continue;
+            }
+
+            let padding_x = cell_w;
+            let padding_y = cell_h / 2;
+            let toast_width = message_len * cell_w + padding_x * 2;
+            let toast_height = cell_h + padding_y * 2;
+            let margin_height = cell_h * bottom_margin_cells;
+
+            if toast_width <= max_allowed_width && toast_height + margin_height <= buffer_height {
+                return (scale, cell_w, cell_h);
+            }
+        }
+
+        let mut probe_font = font_config.clone();
+        probe_font.scale = 1;
+        let (cell_w, cell_h) = self.font_renderer.cell_size(&probe_font);
+        (1, cell_w.max(1), cell_h.max(1))
     }
 
     /// Paints a context menu at the specified position.

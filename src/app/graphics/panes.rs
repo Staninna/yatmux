@@ -120,7 +120,6 @@ impl App {
                 &mut pane.view,
                 ui_style,
                 &pane_font_config,
-                self.show_test_pattern,
             ) {
                 eprintln!("Render pane {} error: {e:#}", pane_render.id);
             }

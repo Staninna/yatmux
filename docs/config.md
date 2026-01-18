@@ -191,6 +191,7 @@ UI colors are optional. If a color is omitted, yatmux derives it from base color
 #### `[ui.toast]`
 
 - `duration_ms` (u64): `1500`
+- `font_scale` (usize | omitted): omitted (auto-scale up to the help overlay font scale, clamped to `1..=8`)
 - `bottom_margin_cells` (usize): `2`
 - `background` (color | omitted): omitted
 - `text` (color | omitted): omitted

@@ -6,7 +6,7 @@ use super::super::color::color_to_u32;
 use super::super::font;
 use super::super::view::TerminalView;
 use super::super::{HelpSection, UiStyle};
-use crate::config::{FontConfig, UiHelpConfig};
+use crate::config::FontConfig;
 
 impl Renderer {
     pub fn paint_help_overlay(
@@ -22,7 +22,6 @@ impl Renderer {
         shell_integration_detected: bool,
         style: &UiStyle,
         font_config: &FontConfig,
-        help_config: &UiHelpConfig,
     ) -> (usize, usize) {
         let padding_cells_x = style.help_padding_x_cells;
         let padding_cells_y = style.help_padding_y_cells;
@@ -74,7 +73,7 @@ impl Renderer {
 
         let content_max_len = blocks.iter().map(|block| block.max_len).max().unwrap_or(0);
         let gutter_cells = 4usize;
-        let max_scale = help_config.font_scale.unwrap_or(8).clamp(1, 8);
+        let max_scale = style.help_font_scale_max;
         let mut selected_layout: Option<HelpLayout> = None;
         let mut fallback_layout: Option<HelpLayout> = None;
 

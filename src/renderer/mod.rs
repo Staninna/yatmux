@@ -82,11 +82,14 @@ pub struct UiStyle {
     pub help_footer_text: u32,
     pub help_padding_x_cells: usize,
     pub help_padding_y_cells: usize,
+    pub help_font_scale_max: usize,
 
     pub toast_bg: u32,
     pub toast_text: u32,
     pub toast_border: u32,
     pub toast_bottom_margin_cells: usize,
+    pub toast_font_scale_override: Option<usize>,
+    pub toast_font_scale_max: usize,
 
     pub sticky_prompt_bg: u32,
     pub sticky_prompt_separator: u32,
@@ -138,11 +141,14 @@ impl UiStyle {
         let help_bg = ui.help.background.unwrap_or(darken(bg, 0.22));
         let help_text = ui.help.text.unwrap_or(fg);
         let help_footer_text = ui.help.footer_text.unwrap_or(darken(fg, 0.45));
+        let help_font_scale_max = ui.help.font_scale.unwrap_or(8).clamp(1, 8);
 
         // Toast
         let toast_bg = ui.toast.background.unwrap_or(darken(bg, 0.22));
         let toast_text = ui.toast.text.unwrap_or(fg);
         let toast_border = ui.toast.border.unwrap_or(darken(fg, 0.70));
+        let toast_font_scale_override = ui.toast.font_scale.map(|s| s.clamp(1, 8));
+        let toast_font_scale_max = toast_font_scale_override.unwrap_or(help_font_scale_max);
 
         // Sticky prompt
         let sticky_prompt_bg = ui.sticky_prompt.background.unwrap_or(darken(bg, 0.22));
@@ -198,11 +204,14 @@ impl UiStyle {
             help_footer_text,
             help_padding_x_cells: ui.help.padding_x_cells,
             help_padding_y_cells: ui.help.padding_y_cells,
+            help_font_scale_max,
 
             toast_bg,
             toast_text,
             toast_border,
             toast_bottom_margin_cells: ui.toast.bottom_margin_cells,
+            toast_font_scale_override,
+            toast_font_scale_max,
 
             sticky_prompt_bg,
             sticky_prompt_separator,

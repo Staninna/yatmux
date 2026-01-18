@@ -170,9 +170,3 @@ These are active while search UI is open:
 "ctrl+shift+pagedown" = "jump_to_next_prompt"
 "ctrl+shift+y" = "toggle_shadow_prompt"
 ```
-
-### Debug
-
-```toml
-"ctrl+shift+g" = "toggle_test_pattern"
-```

@@ -36,16 +36,10 @@ impl Renderer {
         view: &mut TerminalView,
         style: &UiStyle,
         font_config: &FontConfig,
-        show_test_pattern: bool,
     ) -> Result<()> {
         let cell_w = cell_w.max(1);
         let cell_h = cell_h.max(1);
         let font_scale = font_scale.clamp(1, 8);
-
-        if show_test_pattern {
-            self.draw_test_pattern(backbuffer, buffer_width, buffer_height, cell_w, cell_h);
-            return Ok(());
-        }
 
         if region_w < cell_w || region_h < cell_h {
             return Ok(());
@@ -86,7 +80,6 @@ impl Renderer {
         font_scale: usize,
         style: &UiStyle,
         font_config: &FontConfig,
-        show_test_pattern: bool,
     ) -> Result<()> {
         let mut buffer = surface
             .buffer_mut()
@@ -115,7 +108,6 @@ impl Renderer {
             view,
             style,
             font_config,
-            show_test_pattern,
         )?;
 
         buffer
@@ -123,53 +115,6 @@ impl Renderer {
             .map_err(|e| anyhow::anyhow!("softbuffer present failed: {e:?}"))?;
 
         Ok(())
-    }
-
-    fn draw_test_pattern(
-        &self,
-        buffer: &mut [u32],
-        width: usize,
-        height: usize,
-        cell_w: usize,
-        cell_h: usize,
-    ) {
-        let test_text = "TEST PATTERN";
-        let fg: u32 = 0xFFFFFF;
-        let bg: u32 = 0x1a1a2e;
-
-        let start_x = (width / 2).saturating_sub(test_text.len() * cell_w / 2);
-        let start_y = (height / 2).saturating_sub(cell_h / 2);
-
-        if start_x == 0 || start_y == 0 {
-            return;
-        }
-
-        for y in start_y..(start_y + cell_h).min(height) {
-            for x in start_x..(start_x + test_text.len() * cell_w).min(width) {
-                buffer[y * width + x] = bg;
-            }
-        }
-
-        for (i, ch) in test_text.chars().enumerate() {
-            let glyph = font::get_bitmap_glyph(ch);
-            let x = start_x + i * cell_w;
-            let y = start_y;
-            self.draw_glyph(
-                buffer, width, height, 0, 0, width, height, 1, x, y, glyph, fg,
-            );
-        }
-
-        let info_text = "Press Ctrl+Shift+G to toggle";
-        let info_start_x = (width / 2).saturating_sub(info_text.len() * cell_w / 2);
-        let info_y = start_y + cell_h * 2;
-
-        for (i, ch) in info_text.chars().enumerate() {
-            let glyph = font::get_bitmap_glyph(ch);
-            let x = info_start_x + i * cell_w;
-            self.draw_glyph(
-                buffer, width, height, 0, 0, width, height, 1, x, info_y, glyph, fg,
-            );
-        }
     }
 
     fn paint_frame(

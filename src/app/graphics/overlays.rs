@@ -167,7 +167,6 @@ impl App {
                 shell_integration_detected,
                 ui_style,
                 font_config,
-                &self.config.ui.help,
             );
             self.help_scroll = scroll;
             self.help_max_scroll = max_scroll;
@@ -209,7 +208,6 @@ impl App {
                 buffer_width as usize,
                 buffer_height as usize,
                 message,
-                font_scale,
                 ui_style,
                 font_config,
             );

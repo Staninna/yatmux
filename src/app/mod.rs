@@ -74,8 +74,6 @@ pub struct App {
     pub help_scroll: usize,
     pub help_max_scroll: usize,
     pub should_exit: bool,
-    pub show_test_pattern: bool,
-
     last_window_title: Option<String>,
 
     /// Toast message state (message, show time)
@@ -106,7 +104,6 @@ impl App {
             help_scroll: 0,
             help_max_scroll: 0,
             should_exit: false,
-            show_test_pattern: false,
             last_window_title: None,
             toast: None,
             context_menu: None,

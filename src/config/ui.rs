@@ -138,6 +138,7 @@ impl Default for UiSearchConfig {
 #[serde(default)]
 pub struct UiToastConfig {
     pub duration_ms: u64,
+    pub font_scale: Option<usize>,
     #[serde(
         with = "hex_color_opt",
         default,
@@ -163,6 +164,7 @@ impl Default for UiToastConfig {
     fn default() -> Self {
         Self {
             duration_ms: 1500,
+            font_scale: None,
             background: None,
             text: None,
             border: None,

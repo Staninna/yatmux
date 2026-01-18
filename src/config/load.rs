@@ -299,7 +299,11 @@ impl Config {
         out.push_str("# current_match_bg = \"#806000\"\n\n");
 
         out.push_str("[ui.toast]\n");
-        out.push_str("# duration_ms = 1500\n\n");
+        out.push_str("# duration_ms = 1500\n");
+        out.push_str("# bottom_margin_cells = 2\n");
+        out.push_str(
+            "# font_scale = 2 # Toast font scale (1-8, omit to auto match help overlay)\n\n",
+        );
 
         out.push_str("[ui.help]\n");
         out.push_str("# padding_x_cells = 2\n");

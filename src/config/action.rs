@@ -124,9 +124,6 @@ pub enum Action {
 
     /// Reload `config.toml` from disk.
     ReloadConfig,
-
-    /// Toggle test pattern for font debugging.
-    ToggleTestPattern,
 }
 
 impl Action {
@@ -203,8 +200,6 @@ impl Action {
             | Action::ToggleShadowPrompt => "Shell Integration",
 
             Action::ReloadConfig => "Config",
-
-            Action::ToggleTestPattern => "Debug",
         }
     }
 
@@ -270,7 +265,6 @@ impl Action {
             Action::JumpToNextPrompt => "Next prompt",
             Action::ToggleShadowPrompt => "Toggle shadow prompt",
             Action::ReloadConfig => "Reload config",
-            Action::ToggleTestPattern => "Toggle test pattern",
         }
     }
 }

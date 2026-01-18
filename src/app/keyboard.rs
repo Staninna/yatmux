@@ -85,7 +85,6 @@ impl App {
                     | Action::ResizeDown
                     | Action::ClosePane
                     | Action::ToggleHelp
-                    | Action::ToggleTestPattern
                     | Action::CopyLastOutput
                     | Action::JumpToPrevPrompt
                     | Action::JumpToNextPrompt
