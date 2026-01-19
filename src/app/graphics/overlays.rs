@@ -155,12 +155,33 @@ impl App {
                 });
             }
 
+            // Apply filter if active
+            let (sections_to_render, filter_query, match_count) =
+                if self.help_filter.is_active() {
+                    let filtered = self.help_filter.update_filter(&sections);
+                    let count = filtered.iter().map(|s| s.bindings.len()).sum();
+                    // Convert filtered sections back to HelpSection for rendering
+                    let converted: Vec<HelpSection> = filtered.iter()
+                        .map(|fs| HelpSection {
+                            title: fs.title.clone(),
+                            bindings: fs.bindings.iter()
+                                .map(|b| (b.key.clone(), b.action.clone()))
+                                .collect(),
+                        })
+                        .collect();
+                    (converted, Some(self.help_filter.query().to_string()), Some(count))
+                } else {
+                    (sections, None, None)
+                };
+
             let (scroll, max_scroll) = self.renderer.paint_help_overlay(
                 &mut buffer,
                 buffer_width as usize,
                 buffer_height as usize,
                 "Shortcuts",
-                &sections,
+                &sections_to_render,
+                filter_query,
+                match_count,
                 self.help_scroll,
                 accent_color,
                 font_scale,

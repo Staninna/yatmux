@@ -16,6 +16,8 @@ impl Renderer {
         buffer_height: usize,
         title: &str,
         sections: &[HelpSection],
+        filter_query: Option<String>,
+        match_count: Option<usize>,
         scroll_offset: usize,
         accent_color: u32,
         _font_scale: f32,
@@ -26,7 +28,16 @@ impl Renderer {
         let padding_cells_x = style.help_padding_x_cells;
         let padding_cells_y = style.help_padding_y_cells;
 
-        let fixed_lines = vec![title.to_string(), String::new()];
+        let fixed_lines = if let Some(ref query) = filter_query {
+            vec![
+                title.to_string(),
+                String::new(),
+                format!("Filter: {}▎ ({} matches)", query, match_count.unwrap_or(0)),
+                String::new(),
+            ]
+        } else {
+            vec![title.to_string(), String::new()]
+        };
         let mut blocks: Vec<HelpBlock> = Vec::new();
 
         let footer_lines: Vec<String> = if shell_integration_detected {
@@ -47,28 +58,46 @@ impl Renderer {
         let key_col_width = HELP_KEY_COL_WIDTH.max(max_key_len);
 
         let mut max_line_len = title.len();
+        for line in &fixed_lines {
+            max_line_len = max_line_len.max(line.len());
+        }
         for line in &footer_lines {
             max_line_len = max_line_len.max(line.len());
         }
-        for (section_idx, section) in sections.iter().enumerate() {
+
+        // Handle "no matches" case when filter is active
+        if filter_query.is_some() && sections.is_empty() {
+            let no_matches_msg = "No matches found";
+            max_line_len = max_line_len.max(no_matches_msg.len());
             let mut lines = Vec::new();
-            max_line_len = max_line_len.max(section.title.len());
-            lines.push(HelpLine::Header(section.title.clone()));
-
-            for (key, action) in &section.bindings {
-                lines.push(HelpLine::Item {
-                    key: key.clone(),
-                    action: action.to_string(),
-                });
-            }
-
-            if section_idx + 1 < sections.len() {
-                lines.push(HelpLine::Spacer);
-            }
-
+            lines.push(HelpLine::Item {
+                key: String::new(),
+                action: no_matches_msg.to_string(),
+            });
             let block = HelpBlock::new(lines, key_col_width);
             max_line_len = max_line_len.max(block.max_len);
             blocks.push(block);
+        } else {
+            for (section_idx, section) in sections.iter().enumerate() {
+                let mut lines = Vec::new();
+                max_line_len = max_line_len.max(section.title.len());
+                lines.push(HelpLine::Header(section.title.clone()));
+
+                for (key, action) in &section.bindings {
+                    lines.push(HelpLine::Item {
+                        key: key.clone(),
+                        action: action.to_string(),
+                    });
+                }
+
+                if section_idx + 1 < sections.len() {
+                    lines.push(HelpLine::Spacer);
+                }
+
+                let block = HelpBlock::new(lines, key_col_width);
+                max_line_len = max_line_len.max(block.max_len);
+                blocks.push(block);
+            }
         }
 
         let content_max_len = blocks.iter().map(|block| block.max_len).max().unwrap_or(0);
@@ -262,8 +291,14 @@ impl Renderer {
             }
             let line_kind = if idx == 0 {
                 HelpLine::Header(line.clone())
-            } else {
+            } else if line.is_empty() {
                 HelpLine::Spacer
+            } else {
+                // Non-empty lines (like filter text) as items with empty key
+                HelpLine::Item {
+                    key: String::new(),
+                    action: line.clone(),
+                }
             };
             self.draw_help_line(
                 backbuffer,

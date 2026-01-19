@@ -58,6 +58,9 @@ impl App {
                 if self.show_help {
                     self.help_scroll = 0;
                     self.help_max_scroll = 0;
+                } else {
+                    // Deactivate filter when closing help
+                    self.help_filter.deactivate();
                 }
                 self.request_redraw();
             }

@@ -8,6 +8,7 @@ pub mod pane;
 pub mod tab;
 
 mod context_menu;
+mod help_filter;
 mod keyboard;
 mod mouse;
 mod pty;
@@ -17,6 +18,7 @@ mod url;
 mod winit_handler;
 
 pub use context_menu::{ContextMenu, ContextMenuAction};
+pub use help_filter::HelpFilterState;
 pub use pty::spawn_pty_reader;
 
 use std::time::Instant;
@@ -73,6 +75,7 @@ pub struct App {
     pub show_help: bool,
     pub help_scroll: usize,
     pub help_max_scroll: usize,
+    pub help_filter: HelpFilterState,
     pub should_exit: bool,
     last_window_title: Option<String>,
 
@@ -86,7 +89,7 @@ pub struct App {
 impl App {
     /// Creates a new application with the given configuration.
     pub fn new(config: Config) -> Self {
-        let mut app = App {
+        let app = App {
             config,
             tabs: Vec::new(),
             active_tab: 0,
@@ -103,6 +106,7 @@ impl App {
             show_help: false,
             help_scroll: 0,
             help_max_scroll: 0,
+            help_filter: HelpFilterState::new(),
             should_exit: false,
             last_window_title: None,
             toast: None,
