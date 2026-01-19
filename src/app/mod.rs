@@ -76,6 +76,7 @@ pub struct App {
     pub help_scroll: usize,
     pub help_max_scroll: usize,
     pub help_filter: HelpFilterState,
+    pub shell_warning_dismissed: bool,
     pub should_exit: bool,
     last_window_title: Option<String>,
 
@@ -107,6 +108,7 @@ impl App {
             help_scroll: 0,
             help_max_scroll: 0,
             help_filter: HelpFilterState::new(),
+            shell_warning_dismissed: false,
             should_exit: false,
             last_window_title: None,
             toast: None,

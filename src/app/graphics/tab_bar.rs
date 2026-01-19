@@ -2,6 +2,7 @@ use yatmux::config::FontConfig;
 use yatmux::renderer::{UiStyle, font::get_bitmap_glyph};
 
 use crate::app::App;
+use crate::app::input::TabDragState;
 
 use yatmux::renderer::font::FontRenderer;
 
@@ -17,6 +18,8 @@ impl App {
         style: &UiStyle,
         font_renderer: &mut FontRenderer,
         font_config: &FontConfig,
+        drag_state: Option<&TabDragState>,
+        cursor_x: f64,
     ) {
         // Create tab-specific font config
         let mut tab_font_config = font_config.clone();
@@ -57,12 +60,22 @@ impl App {
         let mut x_offset = side_padding;
 
         for (idx, (title, is_active)) in tabs.iter().enumerate() {
+            // Check if this tab is being dragged
+            let is_dragging = drag_state
+                .filter(|d| d.committed && d.tab_index == idx)
+                .is_some();
+
             // Tab background
-            let tab_bg = if *is_active {
+            let mut tab_bg = if *is_active {
                 bg_color
             } else {
                 style.tab_inactive_bg
             };
+
+            // Apply opacity if dragging (50% blend with tab bar background)
+            if is_dragging {
+                tab_bg = Self::blend_colors(tab_bg, style.tab_bar_bg, 128);
+            }
 
             let tab_x0 = x_offset;
             let tab_x1 = if idx == num_tabs - 1 {
@@ -162,6 +175,61 @@ impl App {
                 break;
             }
         }
+
+        // Draw drop indicator if dragging
+        if let Some(drag) = drag_state {
+            if drag.committed {
+                // Calculate drop position indicator x-coordinate
+                let cursor_x_usize = cursor_x as usize;
+
+                // Recalculate tab positions to find drop indicator position
+                let mut drop_x = None;
+                let mut x_offset = side_padding;
+
+                for idx in 0..num_tabs {
+                    let tab_x0 = x_offset;
+                    let tab_x1 = if idx == num_tabs - 1 {
+                        (x_offset + tab_width).min(buffer_width.saturating_sub(side_padding))
+                    } else {
+                        (x_offset + tab_width).min(buffer_width)
+                    };
+
+                    let tab_midpoint = (tab_x0 + tab_x1) / 2;
+
+                    if cursor_x_usize < tab_midpoint {
+                        drop_x = Some(tab_x0);
+                        break;
+                    }
+
+                    x_offset = tab_x1 + tab_gap;
+                }
+
+                // If no drop position found, drop at end
+                if drop_x.is_none() && num_tabs > 0 {
+                    drop_x = Some(x_offset.saturating_sub(tab_gap));
+                }
+
+                // Draw vertical line at drop position
+                if let Some(x) = drop_x {
+                    if x > 0 && x < buffer_width {
+                        let indicator_y0 = style.tab_vertical_padding_px / 2;
+                        let indicator_y1 = tab_bar_height.saturating_sub(1);
+
+                        // Draw 3px wide line for visibility
+                        for y in indicator_y0..indicator_y1 {
+                            let row = y * buffer_width;
+                            if x > 0 {
+                                buffer[row + x.saturating_sub(1)] = accent_color;
+                            }
+                            buffer[row + x] = accent_color;
+                            if x + 1 < buffer_width {
+                                buffer[row + x + 1] = accent_color;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Helper to draw a glyph with proper alpha blending
@@ -220,5 +288,23 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Helper to blend two colors with given alpha (0-255)
+    fn blend_colors(fg: u32, bg: u32, alpha: u8) -> u32 {
+        let fg_r = ((fg >> 16) & 0xFF) as u8;
+        let fg_g = ((fg >> 8) & 0xFF) as u8;
+        let fg_b = (fg & 0xFF) as u8;
+
+        let bg_r = ((bg >> 16) & 0xFF) as u8;
+        let bg_g = ((bg >> 8) & 0xFF) as u8;
+        let bg_b = (bg & 0xFF) as u8;
+
+        let t = alpha as f32 / 255.0;
+        let r = (bg_r as f32 + (fg_r as f32 - bg_r as f32) * t) as u8;
+        let g = (bg_g as f32 + (fg_g as f32 - bg_g as f32) * t) as u8;
+        let b = (bg_b as f32 + (fg_b as f32 - bg_b as f32) * t) as u8;
+
+        ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
     }
 }

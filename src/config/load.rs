@@ -311,7 +311,7 @@ impl Config {
 
         out.push_str("[ui.help]\n");
         out.push_str("# padding_x_cells = 2\n");
-        out.push_str("# padding_y_cells = 1\n");
+        out.push_str("# padding_y_cells = 0\n");
         out.push_str("# font_scale = 8.0 # Help overlay font scale (1.0-8.0, accepts decimals)\n\n");
 
         out.push_str("[ui.dividers]\n");

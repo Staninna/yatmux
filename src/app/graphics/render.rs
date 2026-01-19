@@ -83,6 +83,8 @@ impl App {
                 &ui_style,
                 &mut self.renderer.font_renderer,
                 &font_config,
+                self.input.tab_dragging.as_ref(),
+                self.input.cursor_position.x,
             );
         }
 

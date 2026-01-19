@@ -186,6 +186,7 @@ impl App {
                 accent_color,
                 font_scale,
                 shell_integration_detected,
+                self.shell_warning_dismissed,
                 ui_style,
                 font_config,
             );

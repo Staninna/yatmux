@@ -67,6 +67,11 @@ impl App {
                         self.request_redraw();
                         return;
                     }
+                    "d" if !ctrl && !alt && !self.help_filter.is_active() => {
+                        self.shell_warning_dismissed = true;
+                        self.request_redraw();
+                        return;
+                    }
                     _ => {}
                 }
             }

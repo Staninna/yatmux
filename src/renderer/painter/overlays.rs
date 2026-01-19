@@ -22,6 +22,7 @@ impl Renderer {
         accent_color: u32,
         _font_scale: f32,
         shell_integration_detected: bool,
+        shell_warning_dismissed: bool,
         style: &UiStyle,
         font_config: &FontConfig,
     ) -> (usize, usize) {
@@ -30,9 +31,7 @@ impl Renderer {
 
         let fixed_lines = if let Some(ref query) = filter_query {
             vec![
-                title.to_string(),
-                String::new(),
-                format!("Filter: {}▎ ({} matches)", query, match_count.unwrap_or(0)),
+                format!("{} — Filter: {}▎ ({} matches)", title, query, match_count.unwrap_or(0)),
                 String::new(),
             ]
         } else {
@@ -40,12 +39,12 @@ impl Renderer {
         };
         let mut blocks: Vec<HelpBlock> = Vec::new();
 
-        let footer_lines: Vec<String> = if shell_integration_detected {
+        let footer_lines: Vec<String> = if shell_integration_detected || shell_warning_dismissed {
             Vec::new()
         } else {
             vec![
                 String::new(),
-                "Shell integration not detected".to_string(),
+                "Shell integration not detected (press 'd' to dismiss)".to_string(),
                 "Source scripts/shell/yatmux.bash in your shell".to_string(),
             ]
         };
@@ -80,17 +79,28 @@ impl Renderer {
         } else {
             for (section_idx, section) in sections.iter().enumerate() {
                 let mut lines = Vec::new();
-                max_line_len = max_line_len.max(section.title.len());
-                lines.push(HelpLine::Header(section.title.clone()));
+
+                // When filtered, omit section headers to maximize visible matches
+                if filter_query.is_none() {
+                    max_line_len = max_line_len.max(section.title.len());
+                    lines.push(HelpLine::Header(section.title.clone()));
+                }
 
                 for (key, action) in &section.bindings {
+                    // When filtered, prefix action with section name for context
+                    let action_text = if filter_query.is_some() {
+                        format!("[{}] {}", section.title, action)
+                    } else {
+                        action.to_string()
+                    };
                     lines.push(HelpLine::Item {
                         key: key.clone(),
-                        action: action.to_string(),
+                        action: action_text,
                     });
                 }
 
-                if section_idx + 1 < sections.len() {
+                // When filtered, omit spacers between sections
+                if filter_query.is_none() && section_idx + 1 < sections.len() {
                     lines.push(HelpLine::Spacer);
                 }
 
@@ -125,7 +135,7 @@ impl Renderer {
             let two_col_cols = content_max_len * 2 + gutter_cells;
             let can_use_two_columns =
                 available_cols >= two_col_cols + padding_cells_x * 2 && !blocks.is_empty();
-            let use_two_columns = can_use_two_columns;
+            let use_two_columns = can_use_two_columns && filter_query.is_none();
             let required_cols = if use_two_columns {
                 max_line_len.max(two_col_cols)
             } else {
@@ -176,10 +186,10 @@ impl Renderer {
             total_content_rows
         };
 
-        let box_cols = layout.available_cols * 9 / 10;
+        let box_cols = layout.available_cols * 95 / 100;
         let total_rows =
             fixed_lines.len() + content_rows_needed + footer_lines.len() + padding_cells_y * 2;
-        let box_rows = total_rows.min(layout.available_rows * 9 / 10);
+        let box_rows = total_rows.min(layout.available_rows * 95 / 100);
 
         let box_w = box_cols * cell_w;
         let box_h = box_rows * cell_h;
@@ -278,7 +288,12 @@ impl Renderer {
             );
         }
 
-        let text_color = style.help_text;
+        // When filtered, use accent color for all text to indicate match results
+        let text_color = if filter_query.is_some() {
+            accent_color
+        } else {
+            style.help_text
+        };
         let header_color = accent_color;
         let key_color = accent_color;
         let mut y = origin_y + padding_cells_y * cell_h;

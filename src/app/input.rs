@@ -6,19 +6,36 @@ use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use yatmux::config::Action;
 use yatmux::renderer::TerminalView;
 
+/// State tracking for tab drag-and-drop operations.
+#[derive(Debug, Clone)]
+pub struct TabDragState {
+    /// Index of the tab being dragged
+    pub tab_index: usize,
+    /// X-coordinate where drag started
+    pub start_x: f64,
+    /// Whether drag has moved beyond threshold (5px)
+    pub committed: bool,
+    /// Last known drop index while hovering the tab bar
+    pub last_drop_idx: Option<usize>,
+}
+
 /// Input state for mouse and keyboard.
 pub struct InputState {
     pub cursor_position: PhysicalPosition<f64>,
+    pub cursor_coords_are_physical: Option<bool>,
     pub mouse_selecting: bool,
     pub modifiers: ModifiersState,
+    pub tab_dragging: Option<TabDragState>,
 }
 
 impl Default for InputState {
     fn default() -> Self {
         InputState {
             cursor_position: PhysicalPosition::new(0.0, 0.0),
+            cursor_coords_are_physical: None,
             mouse_selecting: false,
             modifiers: ModifiersState::empty(),
+            tab_dragging: None,
         }
     }
 }

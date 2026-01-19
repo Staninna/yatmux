@@ -10,6 +10,30 @@ impl App {
         }
     }
 
+    fn normalize_cursor_position(
+        &mut self,
+        position: PhysicalPosition<f64>,
+        scale: f64,
+        logical_size: winit::dpi::LogicalSize<f64>,
+    ) -> PhysicalPosition<f64> {
+        if scale == 1.0 {
+            self.input.cursor_coords_are_physical = Some(true);
+            return position;
+        }
+
+        if position.x > logical_size.width || position.y > logical_size.height {
+            self.input.cursor_coords_are_physical = Some(true);
+        }
+
+        match self.input.cursor_coords_are_physical {
+            Some(true) => position,
+            Some(false) | None => {
+                let logical = winit::dpi::LogicalPosition::new(position.x, position.y);
+                logical.to_physical(scale)
+            }
+        }
+    }
+
     fn handle_left_click(&mut self, state: ElementState) {
         // Close context menu on any left click
         if self.context_menu.is_some() {
@@ -29,12 +53,46 @@ impl App {
             return;
         }
 
+        // Handle tab drag completion on release (before anything else)
+        if state == ElementState::Released {
+            if let Some(drag) = self.input.tab_dragging.take() {
+                let cursor_pos = self.input.cursor_position;
+                let tab_bar_height = self.tab_bar_height();
+
+                if drag.committed {
+                    if let Some(drop_idx) = drag.last_drop_idx {
+                        if drop_idx != drag.tab_index {
+                            self.reorder_tab(drag.tab_index, drop_idx);
+                            self.layout_dirty = true;
+                        }
+                    }
+                } else if cursor_pos.y >= 0.0 && (cursor_pos.y as usize) < tab_bar_height {
+                    // Click without drag in tab bar - switch to clicked tab
+                    self.goto_tab(drag.tab_index);
+                }
+
+                self.request_redraw();
+                self.update_cursor();
+                return;
+            }
+        }
+
         // Check if click is in tab bar
         let tab_bar_height = self.tab_bar_height();
         let cursor_pos = self.input.cursor_position;
         if tab_bar_height > 0 && (cursor_pos.y as usize) < tab_bar_height {
             if state == ElementState::Pressed {
-                self.handle_tab_bar_click();
+                // Initiate potential drag operation (only if multiple tabs)
+                if self.tabs.len() > 1 {
+                    if let Some(tab_idx) = self.calculate_tab_at_position(cursor_pos.x) {
+                        self.input.tab_dragging = Some(crate::app::input::TabDragState {
+                            tab_index: tab_idx,
+                            start_x: cursor_pos.x,
+                            committed: false,
+                            last_drop_idx: None,
+                        });
+                    }
+                }
             }
             return;
         }
@@ -146,18 +204,16 @@ impl App {
         }
     }
 
-    fn handle_tab_bar_click(&mut self) {
+    /// Calculates which tab index contains the given x-coordinate
+    fn calculate_tab_at_position(&self, x: f64) -> Option<usize> {
         let buffer_width = self.last_buffer_size.0 as usize;
         let num_tabs = self.tabs.len();
 
         if num_tabs == 0 {
-            return;
+            return None;
         }
 
-        // Use the same calculation as actual rendering
         let style = &yatmux::renderer::UiStyle::from_config(&self.config);
-
-        // Create tab-specific font config with scaled font
         let mut tab_font_config = self.config.font.clone();
         tab_font_config.scale = style.tab_font_scale;
 
@@ -169,33 +225,88 @@ impl App {
         let tab_width = (available_width / num_tabs)
             .min(cell_w * style.tab_max_width_cells + style.tab_max_width_px_extra);
 
-        let click_x = self.input.cursor_position.x as usize;
+        let click_x = x as usize;
 
-        // Check if click is in the side padding area
         if click_x < side_padding {
-            return;
+            return None;
         }
 
-        // Calculate which tab was clicked
         let mut x_offset = side_padding;
         for (idx, _) in self.tabs.iter().enumerate() {
             let tab_x0 = x_offset;
             let tab_x1 = if idx == num_tabs - 1 {
-                // Last tab extends to fill remaining space (minus padding)
                 (x_offset + tab_width).min(buffer_width.saturating_sub(side_padding))
             } else {
                 (x_offset + tab_width).min(buffer_width)
             };
 
             if click_x >= tab_x0 && click_x < tab_x1 {
-                self.goto_tab(idx);
-                return;
+                return Some(idx);
             }
 
             x_offset = tab_x1 + tab_gap;
             if x_offset >= buffer_width {
                 break;
             }
+        }
+
+        None
+    }
+
+    /// Calculates the drop position (insertion index) for a tab being dragged to x-coordinate
+    fn calculate_tab_drop_position(&self, x: f64) -> usize {
+        let buffer_width = self.last_buffer_size.0 as usize;
+        let num_tabs = self.tabs.len();
+
+        if num_tabs == 0 {
+            return 0;
+        }
+
+        let style = &yatmux::renderer::UiStyle::from_config(&self.config);
+        let mut tab_font_config = self.config.font.clone();
+        tab_font_config.scale = style.tab_font_scale;
+
+        let (cell_w, _) = self.renderer.font_renderer.cell_size(&tab_font_config);
+        let tab_gap = style.tab_gap_px;
+        let side_padding = style.tab_side_padding_px;
+        let total_gap_width = tab_gap * (num_tabs.saturating_sub(1)) + side_padding * 2;
+        let available_width = buffer_width.saturating_sub(total_gap_width);
+        let tab_width = (available_width / num_tabs)
+            .min(cell_w * style.tab_max_width_cells + style.tab_max_width_px_extra);
+
+        let cursor_x = x as usize;
+
+        // If before first tab, drop at position 0
+        if cursor_x < side_padding {
+            return 0;
+        }
+
+        // Calculate midpoints of each tab boundary
+        let mut x_offset = side_padding;
+        for idx in 0..num_tabs {
+            let tab_x0 = x_offset;
+            let tab_x1 = if idx == num_tabs - 1 {
+                (x_offset + tab_width).min(buffer_width.saturating_sub(side_padding))
+            } else {
+                (x_offset + tab_width).min(buffer_width)
+            };
+
+            let tab_midpoint = (tab_x0 + tab_x1) / 2;
+
+            if cursor_x < tab_midpoint {
+                return idx;
+            }
+
+            x_offset = tab_x1 + tab_gap;
+        }
+
+        // After all tabs, drop at end
+        num_tabs
+    }
+
+    fn handle_tab_bar_click(&mut self) {
+        if let Some(tab_idx) = self.calculate_tab_at_position(self.input.cursor_position.x) {
+            self.goto_tab(tab_idx);
         }
     }
 
@@ -214,6 +325,70 @@ impl App {
         let cursor_pos = self.input.cursor_position;
         let x = cursor_pos.x as usize;
         let y = cursor_pos.y as usize;
+
+        let tab_bar_height = self.tab_bar_height();
+        if tab_bar_height > 0 && y < tab_bar_height {
+            if let Some(tab_idx) = self.calculate_tab_at_position(cursor_pos.x) {
+                self.goto_tab(tab_idx);
+            } else {
+                return;
+            }
+
+            let mut items: Vec<(&'static str, ContextMenuAction)> = Vec::new();
+            items.push(("New Tab", ContextMenuAction::NewTab));
+            items.push(("Close Tab", ContextMenuAction::CloseTab));
+
+            if self.active_tab > 0 {
+                items.push(("Move Tab Left", ContextMenuAction::MoveTabLeft));
+                items.push(("Move Tab to Start", ContextMenuAction::MoveTabToStart));
+            }
+            if self.active_tab + 1 < self.tabs.len() {
+                items.push(("Move Tab Right", ContextMenuAction::MoveTabRight));
+                items.push(("Move Tab to End", ContextMenuAction::MoveTabToEnd));
+            }
+            if self.tabs.len() > 1 {
+                items.push(("Next Tab", ContextMenuAction::NextTab));
+                items.push(("Previous Tab", ContextMenuAction::PrevTab));
+                items.push(("Close Other Tabs", ContextMenuAction::CloseOtherTabs));
+            }
+            if self.active_tab + 1 < self.tabs.len() {
+                items.push((
+                    "Close Tabs to the Right",
+                    ContextMenuAction::CloseTabsToRight,
+                ));
+            }
+
+            let (cell_w, cell_h) = self.renderer.font_renderer.cell_size(&self.config.font);
+            let padding_x = cell_w;
+            let max_label_len = items
+                .iter()
+                .map(|(label, _)| label.len())
+                .max()
+                .unwrap_or(8);
+            let menu_width = max_label_len * cell_w + padding_x * 2;
+            let item_height = cell_h + 8; // cell height + padding
+            let menu_height = items.len() * item_height;
+
+            let (rendered_x, rendered_y) = ContextMenu::calculate_rendered_position(
+                x,
+                y,
+                menu_width,
+                menu_height,
+                self.last_buffer_size.0 as usize,
+                self.last_buffer_size.1 as usize,
+            );
+
+            self.context_menu = Some(ContextMenu {
+                items,
+                click_x: x,
+                click_y: y,
+                rendered_x,
+                rendered_y,
+                hovered: Some(0),
+            });
+            self.request_redraw();
+            return;
+        }
 
         // Build context menu items based on current state
         let mut items: Vec<(&'static str, ContextMenuAction)> = Vec::new();
@@ -308,12 +483,56 @@ impl App {
     }
 
     pub(super) fn handle_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
-        self.input.cursor_position = position;
+        let normalized = if let Some(graphics) = &self.graphics {
+            let window = graphics.surface.window();
+            let scale = window.scale_factor();
+            let logical_size = window.inner_size().to_logical::<f64>(scale);
+            self.normalize_cursor_position(position, scale, logical_size)
+        } else {
+            position
+        };
+        self.input.cursor_position = normalized;
 
         let (buffer_width, buffer_height) = self.last_buffer_size;
         if buffer_width == 0 || buffer_height == 0 {
             self.update_cursor();
             return;
+        }
+
+        // Handle tab dragging
+        let tab_bar_height = self.tab_bar_height();
+        let mut drag_committed = false;
+        let dragging_info = if let Some(ref mut drag) = self.input.tab_dragging {
+            let distance = (position.x - drag.start_x).abs();
+            let was_committed = drag.committed;
+
+            // Commit drag if moved beyond threshold (5px)
+            if !drag.committed && distance > 5.0 {
+                drag.committed = true;
+            }
+
+            drag_committed = drag.committed;
+
+            Some((was_committed, drag.committed))
+        } else {
+            None
+        };
+
+        if drag_committed && tab_bar_height > 0 {
+            let drop_idx = self.calculate_tab_drop_position(position.x);
+            if let Some(ref mut drag) = self.input.tab_dragging {
+                drag.last_drop_idx = Some(drop_idx);
+            }
+        }
+
+        if let Some((was_committed, now_committed)) = dragging_info {
+            if !was_committed && now_committed {
+                self.update_cursor(); // Change to grabbing cursor
+            }
+            if now_committed {
+                self.request_redraw(); // Redraw for visual feedback
+            }
+            return; // Don't process other hover logic during drag
         }
 
         // Update context menu hover state if menu is open

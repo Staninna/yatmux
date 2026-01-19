@@ -213,7 +213,7 @@ impl Default for UiHelpConfig {
     fn default() -> Self {
         Self {
             padding_x_cells: 2,
-            padding_y_cells: 1,
+            padding_y_cells: 0,
             font_scale: None,
             background: None,
             text: None,

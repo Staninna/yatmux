@@ -133,8 +133,24 @@ impl App {
             return;
         };
 
+        // Check if dragging tab
+        if let Some(drag) = &self.input.tab_dragging {
+            if drag.committed {
+                graphics.surface.window().set_cursor(CursorIcon::Grabbing);
+                return;
+            }
+        }
+
         let (buffer_width, buffer_height) = self.last_buffer_size;
         if buffer_width == 0 || buffer_height == 0 {
+            return;
+        }
+
+        // Check if hovering tab bar
+        let tab_bar_height = self.tab_bar_height();
+        let cursor_pos = self.input.cursor_position;
+        if tab_bar_height > 0 && (cursor_pos.y as usize) < tab_bar_height {
+            graphics.surface.window().set_cursor(CursorIcon::Pointer);
             return;
         }
 

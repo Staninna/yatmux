@@ -31,6 +31,16 @@ pub enum ContextMenuAction {
     CopyLastOutput,
     JumpToPrevPrompt,
     JumpToNextPrompt,
+    NewTab,
+    CloseTab,
+    NextTab,
+    PrevTab,
+    MoveTabLeft,
+    MoveTabRight,
+    MoveTabToStart,
+    MoveTabToEnd,
+    CloseOtherTabs,
+    CloseTabsToRight,
 }
 
 use super::*;
@@ -133,6 +143,36 @@ impl App {
             }
             ContextMenuAction::JumpToNextPrompt => {
                 self.execute_action(Action::JumpToNextPrompt);
+            }
+            ContextMenuAction::NewTab => {
+                self.execute_action(Action::NewTab);
+            }
+            ContextMenuAction::CloseTab => {
+                self.execute_action(Action::CloseTab);
+            }
+            ContextMenuAction::NextTab => {
+                self.execute_action(Action::NextTab);
+            }
+            ContextMenuAction::PrevTab => {
+                self.execute_action(Action::PrevTab);
+            }
+            ContextMenuAction::MoveTabLeft => {
+                self.move_active_tab_left();
+            }
+            ContextMenuAction::MoveTabRight => {
+                self.move_active_tab_right();
+            }
+            ContextMenuAction::MoveTabToStart => {
+                self.move_active_tab_to_start();
+            }
+            ContextMenuAction::MoveTabToEnd => {
+                self.move_active_tab_to_end();
+            }
+            ContextMenuAction::CloseOtherTabs => {
+                self.close_other_tabs();
+            }
+            ContextMenuAction::CloseTabsToRight => {
+                self.close_tabs_to_right();
             }
         }
     }

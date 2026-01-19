@@ -73,6 +73,7 @@ yatmux switches behavior depending on whether the running app has enabled mouse 
 ### Context menu
 
 - Right click opens a context menu with actions like Copy/Paste/Search, scroll controls, and shell-integration actions when available.
+- Right click on a tab opens a tab context menu (new/close, move left/right/start/end, next/previous, close others/right).
 - Middle click pastes.
 
 ## Copy / paste
