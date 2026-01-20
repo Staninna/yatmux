@@ -1,6 +1,7 @@
 //! PTY (Pseudo-Terminal) handling for shell communication.
 
 use std::io::{Read, Write};
+use std::path::Path;
 use std::sync::Mutex;
 
 use anyhow::{Context as _, Result};
@@ -70,6 +71,11 @@ impl PtyWriter for Pty {
 
 /// Spawns a shell process and returns the PTY handle and reader.
 pub fn spawn_shell() -> Result<(Pty, Box<dyn Read + Send>)> {
+    spawn_shell_with_cwd(None)
+}
+
+/// Spawns a shell process with an optional working directory.
+pub fn spawn_shell_with_cwd(cwd: Option<&Path>) -> Result<(Pty, Box<dyn Read + Send>)> {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -85,6 +91,9 @@ pub fn spawn_shell() -> Result<(Pty, Box<dyn Read + Send>)> {
     cmd.env("TERM_PROGRAM", "yatmux");
     cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
     cmd.env("YATMUX", "1");
+    if let Some(cwd) = cwd {
+        cmd.cwd(cwd);
+    }
 
     let child = pair.slave.spawn_command(cmd).context("spawn shell")?;
 

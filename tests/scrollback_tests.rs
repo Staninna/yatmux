@@ -28,7 +28,7 @@ fn test_add_history_rows() {
     buffer.add_history_rows(make_rows(&["Line 1", "Line 2"]), 2);
 
     assert_eq!(buffer.len(), 2);
-    assert_eq!(buffer.last_vt100_scrollback_len(), 2);
+    assert_eq!(buffer.last_scrollback_len(), 2);
 }
 
 #[test]

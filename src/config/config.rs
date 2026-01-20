@@ -13,6 +13,7 @@ pub struct Config {
     pub font: FontConfig,
     pub pane: PaneConfig,
     pub keybinds: KeybindConfig,
+    pub plugins: PluginConfig,
 
     pub ui: UiConfig,
     pub interaction: InteractionConfig,
@@ -31,6 +32,7 @@ impl Default for Config {
             font: FontConfig::default(),
             pane: PaneConfig::default(),
             keybinds: KeybindConfig::default(),
+            plugins: PluginConfig::default(),
             ui: UiConfig::default(),
             interaction: InteractionConfig::default(),
             experimental: ExperimentalConfig::default(),
@@ -41,6 +43,20 @@ impl Default for Config {
 impl Config {
     pub fn font_scale_clamp(&self) -> (f32, f32) {
         self.experimental.font_scale_clamp.normalized()
+    }
+
+    pub fn apply_toml_patch(&mut self, patch: toml::Value) -> Result<(), String> {
+        let current_toml = toml::to_string(self).map_err(|e| e.to_string())?;
+        let mut current_value = current_toml
+            .parse::<toml::Value>()
+            .map_err(|e| e.to_string())?;
+
+        Config::deep_merge(&mut current_value, patch);
+
+        let mut new_config: Config = current_value.try_into().map_err(|e| e.to_string())?;
+        new_config.apply_defaults();
+        *self = new_config;
+        Ok(())
     }
 
     pub fn apply_defaults(&mut self) {

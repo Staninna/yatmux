@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use softbuffer::Surface;
-use vt100::Color;
+use crate::core::color::Color;
 
 use crate::config::FontConfig;
 use crate::terminal::Terminal;

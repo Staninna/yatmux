@@ -3,9 +3,9 @@
 //! This module provides:
 //! - A 256-color palette following xterm standards
 //! - RGB color manipulation helpers
-//! - Conversion between vt100::Color and u32
+//! - Conversion between Color and u32
 
-use vt100::Color;
+use crate::core::color::Color;
 
 use crate::constants::{DEFAULT_BG_COLOR, DEFAULT_FG_COLOR};
 
@@ -33,10 +33,10 @@ pub fn lighten_color(color: u32) -> u32 {
     rgb_to_u32(r, g, b)
 }
 
-/// Converts a vt100::Color to a u32 color value.
+/// Converts a Color to a u32 color value.
 ///
 /// # Arguments
-/// * `color` - The vt100 color to convert
+/// * `color` - The color to convert
 /// * `default` - The default color to use if `color` is `Color::Default`
 /// * `palette` - The 256-color palette for indexed colors
 pub fn color_to_u32(color: Color, default: u32, palette: &[u32; 256]) -> u32 {
@@ -47,13 +47,13 @@ pub fn color_to_u32(color: Color, default: u32, palette: &[u32; 256]) -> u32 {
     }
 }
 
-/// Resolves foreground color from a vt100::Color using the standard palette.
+/// Resolves foreground color from a Color using the standard palette.
 #[allow(dead_code)]
 pub fn resolve_fg(color: Color, palette: &[u32; 256]) -> u32 {
     color_to_u32(color, DEFAULT_FG_COLOR, palette)
 }
 
-/// Resolves background color from a vt100::Color using the standard palette.
+/// Resolves background color from a Color using the standard palette.
 #[allow(dead_code)]
 pub fn resolve_bg(color: Color, palette: &[u32; 256]) -> u32 {
     color_to_u32(color, DEFAULT_BG_COLOR, palette)

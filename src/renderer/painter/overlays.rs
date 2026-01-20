@@ -1,4 +1,4 @@
-use vt100::Color;
+use crate::core::color::Color;
 
 use super::Renderer;
 
@@ -152,8 +152,6 @@ impl Renderer {
                 available_cols,
                 available_rows,
                 use_two_columns,
-                content_rows_capacity,
-                required_cols,
             };
 
             if use_two_columns && can_fit_blocks(&blocks, content_rows_capacity) {
@@ -1040,8 +1038,6 @@ struct HelpLayout {
     available_cols: usize,
     available_rows: usize,
     use_two_columns: bool,
-    content_rows_capacity: usize,
-    required_cols: usize,
 }
 
 #[derive(Clone, Copy)]

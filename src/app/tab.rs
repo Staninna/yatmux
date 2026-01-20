@@ -3,6 +3,7 @@
 //! Each tab contains its own set of panes with an independent layout tree.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use winit::event_loop::EventLoopProxy;
 
@@ -119,8 +120,9 @@ impl Tab {
         event_proxy: Option<&EventLoopProxy<AppEvent>>,
         tab_id: TabId,
         shadow_prompt_enabled: bool,
+        cwd: Option<&Path>,
     ) {
-        let (pty, reader) = match yatmux::pty::spawn_shell() {
+        let (pty, reader) = match yatmux::pty::spawn_shell_with_cwd(cwd) {
             Ok(result) => result,
             Err(e) => {
                 eprintln!("Failed to spawn shell: {e}");
@@ -157,6 +159,7 @@ impl Tab {
         scrollback_lines: usize,
         event_proxy: Option<&EventLoopProxy<AppEvent>>,
         shadow_prompt_enabled: bool,
+        cwd: Option<&Path>,
     ) {
         if !self.panes.is_empty() {
             return;
@@ -168,6 +171,7 @@ impl Tab {
             event_proxy,
             self.id,
             shadow_prompt_enabled,
+            cwd,
         );
     }
 
@@ -182,10 +186,11 @@ impl Tab {
         current_rect: Option<Rect>,
         min_pane_size: usize,
         shadow_prompt_enabled: bool,
-    ) -> bool {
+        cwd: Option<&Path>,
+    ) -> Option<PaneId> {
         let focused = self.focused_pane;
         if !self.layout.contains_pane(focused) {
-            return false;
+            return None;
         }
 
         // Check if splitting would create panes that are too small
@@ -195,7 +200,7 @@ impl Tab {
                 SplitDir::Horizontal => (rect.w, rect.h / 2),
             };
             if new_w < min_pane_size || new_h < min_pane_size {
-                return false;
+                return None;
             }
         }
 
@@ -214,6 +219,7 @@ impl Tab {
             event_proxy,
             self.id,
             shadow_prompt_enabled,
+            cwd,
         );
 
         let replacement = LayoutNode::Split {
@@ -225,9 +231,9 @@ impl Tab {
 
         if self.layout.replace_leaf(focused, replacement) {
             self.set_focus(new_id);
-            true
+            Some(new_id)
         } else {
-            false
+            None
         }
     }
 

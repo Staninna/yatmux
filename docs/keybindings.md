@@ -7,7 +7,7 @@ Keybindings are configured under `[keybinds]` in `config.toml`.
 The `[keybinds]` table is a flat map of:
 
 - key: a string like `"ctrl+shift+c"` or `"alt+left"`
-- value: an action name in `snake_case`
+- value: either a built-in action name in `snake_case`, or a plugin command table
 
 Example:
 
@@ -15,6 +15,13 @@ Example:
 [keybinds]
 "ctrl+shift+c" = "copy"
 "ctrl+shift+v" = "paste"
+```
+
+Plugin command example:
+
+```toml
+[keybinds]
+"ctrl+shift+w" = { plugin = "worktree", command = "new", args = { branch = "feat-x" } }
 ```
 
 ### Supported modifiers
@@ -47,6 +54,15 @@ Notes:
 - Disabled bindings still appear in the `[keybinds]` table but are ignored at runtime.
 - On load, yatmux merges in any *new* default bindings you don’t already have.
   Your explicit overrides (including `"none"`) are preserved.
+
+## Plugin commands
+
+When a plugin keybind is pressed, yatmux emits a `plugin_command` event with:
+
+- `plugin`: plugin name from the keybind table
+- `command`: command string
+- `args`: optional args table (converted to JSON)
+- `cwd`: current pane cwd when available
 
 ## Available actions
 

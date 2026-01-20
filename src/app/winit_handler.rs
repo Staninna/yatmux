@@ -4,6 +4,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
 
 use super::{App, AppEvent};
+use super::plugins::PluginEvent;
 
 impl ApplicationHandler<AppEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -12,6 +13,8 @@ impl ApplicationHandler<AppEvent> for App {
         if self.graphics.is_none() {
             self.create_window(event_loop);
         }
+
+        self.dispatch_startup_event();
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
@@ -71,6 +74,9 @@ impl ApplicationHandler<AppEvent> for App {
                     event_loop.exit();
                 }
             }
+            AppEvent::PluginCommands { plugin, commands } => {
+                self.handle_plugin_commands(plugin, commands);
+            }
         }
     }
 
@@ -82,6 +88,14 @@ impl ApplicationHandler<AppEvent> for App {
     ) {
         match event {
             WindowEvent::CloseRequested => {
+                self.dispatch_plugin_event(PluginEvent {
+                    event: "shutdown".to_string(),
+                    action: None,
+                    source: None,
+                    tab_id: self.active_tab().map(|t| t.id),
+                    pane_id: self.active_tab().map(|t| t.focused_pane),
+                    data: None,
+                });
                 event_loop.exit();
             }
 

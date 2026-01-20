@@ -1,6 +1,6 @@
 //! Shared grid snapshot types used across the project.
 
-use vt100::Color;
+use crate::core::color::Color;
 
 /// Cell data: character, foreground color, background color.
 pub type CellData = (char, Color, Color);

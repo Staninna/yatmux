@@ -1,4 +1,6 @@
 use super::*;
+use super::plugins::PluginEvent;
+use serde_json::json;
 
 impl App {
     pub(super) fn handle_mouse_button(&mut self, state: ElementState, button: MouseButton) {
@@ -102,8 +104,22 @@ impl App {
             return;
         };
 
-        if let Some(tab) = self.active_tab_mut() {
+        let tab_id = if let Some(tab) = self.active_tab_mut() {
             tab.set_focus(pane_id);
+            Some(tab.id)
+        } else {
+            None
+        };
+        if let Some(tab_id) = tab_id {
+            let cwd = self.cwd_for_event(Some(tab_id), Some(pane_id));
+            self.dispatch_plugin_event(PluginEvent {
+                event: "pane_focus_changed".to_string(),
+                action: None,
+                source: None,
+                tab_id: Some(tab_id),
+                pane_id: Some(pane_id),
+                data: Some(json!({ "reason": "mouse", "cwd": cwd })),
+            });
         }
         self.refresh_active_tab_title_from_focused_pane();
 
@@ -612,7 +628,7 @@ impl App {
         }
 
         // Get pane scale and compute cell size before mutable borrow
-        let (pane_scale, focused_pane, cell_w, cell_h) = {
+        let (_pane_scale, focused_pane, cell_w, cell_h) = {
             let Some(tab) = self.active_tab() else {
                 return;
             };

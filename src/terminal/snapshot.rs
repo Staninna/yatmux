@@ -1,9 +1,9 @@
-use vt100::Color;
+use crate::core::color::Color;
 
 use crate::core::grid::RowSnapshot;
 
 use super::Terminal;
-use super::adapters::color_attr_to_vt100;
+use super::adapters::color_attr_to_color;
 
 /// A complete snapshot of the terminal screen state.
 #[allow(dead_code)]
@@ -51,8 +51,8 @@ impl Terminal {
                     let grapheme = cell.str();
                     let ch = grapheme.chars().next().unwrap_or(' ');
                     let attrs = cell.attrs();
-                    let fg = color_attr_to_vt100(attrs.foreground());
-                    let bg = color_attr_to_vt100(attrs.background());
+                    let fg = color_attr_to_color(attrs.foreground());
+                    let bg = color_attr_to_color(attrs.background());
                     cells.push((ch, fg, bg));
                 } else {
                     cells.push((' ', Color::Default, Color::Default));
@@ -135,8 +135,8 @@ impl Terminal {
                         let grapheme = cell.str();
                         let ch = grapheme.chars().next().unwrap_or(' ');
                         let attrs = cell.attrs();
-                        let fg = color_attr_to_vt100(attrs.foreground());
-                        let bg = color_attr_to_vt100(attrs.background());
+                        let fg = color_attr_to_color(attrs.foreground());
+                        let bg = color_attr_to_color(attrs.background());
                         cells.push((ch, fg, bg));
 
                         // Extract OSC 8 hyperlink if present

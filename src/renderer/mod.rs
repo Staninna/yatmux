@@ -10,7 +10,6 @@
 
 mod color;
 pub mod font;
-mod help;
 mod painter;
 mod view;
 

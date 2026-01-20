@@ -32,6 +32,14 @@ pub struct RenderedGlyph {
 
 const GLYPH_CACHE_MAX_ENTRIES: usize = 10000;
 
+/// Font Memory Management
+///
+/// This renderer uses Box::leak() to create 'static lifetime font data required by rusttype::Font.
+/// - Bundled fonts: Leaked once at initialization (~280KB)
+/// - System fonts: Leaked when first loaded, cached forever
+///
+/// Typical memory cost: <2MB for 1-3 fonts (acceptable for long-lived process).
+/// Trade-off: Simple lifetime management vs. no font hot-reloading.
 impl FontRenderer {
     pub fn new() -> Result<Self, String> {
         let glyph_cache = RefCell::new(HashMap::new());

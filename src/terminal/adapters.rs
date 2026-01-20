@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 use std::sync::Arc;
 
-use vt100::Color;
+use crate::core::color::Color;
 
 use crate::pty::PtyWriter;
 
@@ -40,7 +40,7 @@ impl Write for PtyWriteAdapter {
     }
 }
 
-pub(super) fn color_attr_to_vt100(color: ColorAttribute) -> Color {
+pub(super) fn color_attr_to_color(color: ColorAttribute) -> Color {
     match color {
         ColorAttribute::Default => Color::Default,
         ColorAttribute::PaletteIndex(idx) => Color::Idx(idx),

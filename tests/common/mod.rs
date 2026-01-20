@@ -1,6 +1,6 @@
 //! Shared test utilities for terminal tests.
 
-use vt100::Color;
+use yatmux::core::color::Color;
 use yatmux::core::grid::RowSnapshot;
 
 /// Creates a row snapshot from a text string.

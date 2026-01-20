@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use yatmux::config::Action;
 use yatmux::renderer::{HelpSection, UiStyle};
 
 use crate::app::App;
@@ -109,14 +108,13 @@ impl App {
 
             let mut by_category: HashMap<&'static str, Vec<(String, String)>> = HashMap::new();
             for (key, action) in &self.config.keybinds.bindings {
-                // Skip disabled bindings (Action::None)
-                if *action == Action::None {
+                if action.is_disabled() {
                     continue;
                 }
                 by_category
                     .entry(action.category())
                     .or_default()
-                    .push((key.clone(), action.label().to_string()));
+                    .push((key.clone(), action.label()));
             }
 
             // Consolidate numbered entries (e.g., "Go to tab 1" through "Go to tab 9")
@@ -218,6 +216,27 @@ impl App {
                 menu_y,
                 items,
                 font_scale,
+                ui_style,
+                font_config,
+            );
+        }
+
+        if let Some(prompt) = &self.prompt {
+            let input = match prompt.kind {
+                crate::app::PromptKind::Input => Some(prompt.input.as_str()),
+                _ => None,
+            };
+            self.renderer.paint_prompt(
+                &mut buffer,
+                buffer_width as usize,
+                buffer_height as usize,
+                &prompt.title,
+                prompt.message.as_deref(),
+                input,
+                &prompt.items,
+                prompt.selected,
+                &prompt.ok_label,
+                &prompt.cancel_label,
                 ui_style,
                 font_config,
             );

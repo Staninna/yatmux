@@ -1,8 +1,29 @@
 use super::*;
+use super::plugins::ActionSource;
+use yatmux::config::KeybindAction;
 
 impl App {
     pub(super) fn handle_keyboard(&mut self, event: &winit::event::KeyEvent) {
         if event.state != ElementState::Pressed {
+            return;
+        }
+
+        if self.prompt.is_some() {
+            let update = {
+                let prompt = self.prompt.as_mut().expect("prompt checked");
+                App::handle_prompt_input(prompt, event, self.input.modifiers)
+            };
+            if update.needs_redraw {
+                self.request_redraw();
+            }
+            if let Some(resolution) = update.resolution {
+                self.finish_prompt(
+                    resolution.ok,
+                    resolution.value,
+                    resolution.index,
+                    resolution.reason,
+                );
+            }
             return;
         }
 
@@ -12,9 +33,14 @@ impl App {
         let alt = modifiers.alt_key();
 
         let key_str = key_event_to_string(event);
-        let action = key_str
+        let binding = key_str
             .as_deref()
-            .and_then(|s| self.config.keybinds.get_action(s, ctrl, shift, alt));
+            .and_then(|s| self.config.keybinds.get_binding(s, ctrl, shift, alt));
+        let action = binding.as_ref().and_then(|b| b.builtin_action());
+        let plugin_binding = binding.as_ref().and_then(|b| match b {
+            KeybindAction::Plugin(plugin) => Some(plugin),
+            _ => None,
+        });
         let non_search_action = action.filter(|a| !a.is_search_mode_only());
 
         // If the help overlay is open, capture navigation keys for scrolling.
@@ -92,6 +118,11 @@ impl App {
             }
         }
 
+        if let Some(plugin_binding) = plugin_binding {
+            self.dispatch_plugin_keybind_event(plugin_binding, ActionSource::User);
+            return;
+        }
+
         // Tab and pane actions are always handled, even while searching.
         if let Some(action) = non_search_action {
             if matches!(
@@ -145,7 +176,11 @@ impl App {
             };
 
             if pane.view.is_search_active() {
+                let search_action = action.filter(|a| a.is_search_mode_only());
                 needs_redraw |= apply_search_input(&mut pane.view, modifiers, action, event);
+                if let Some(search_action) = search_action {
+                    self.dispatch_action_event(search_action, ActionSource::User);
+                }
             } else if let Some(action) = non_search_action {
                 action_to_execute = Some(action);
             } else {

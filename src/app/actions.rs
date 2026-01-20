@@ -2,12 +2,19 @@
 
 use yatmux::config::Action;
 
+use super::plugins::{ActionSource, PluginEvent};
+use serde_json::json;
+
 use crate::app::App;
 use crate::app::layout::SplitDir;
 
 impl App {
     /// Executes a configured action.
     pub fn execute_action(&mut self, action: Action) {
+        self.execute_action_with_source(action, ActionSource::User);
+    }
+
+    pub fn execute_action_with_source(&mut self, action: Action, source: ActionSource) {
         match action {
             // Disabled action - do nothing
             Action::None => {}
@@ -170,6 +177,8 @@ impl App {
                 self.show_toast(message);
             }
         }
+
+        self.dispatch_action_event(action, source);
     }
 
     /// Copies the last command's output to clipboard.
@@ -242,15 +251,34 @@ impl App {
         let pane_height = (buffer_height as usize).saturating_sub(tab_bar_height);
         let overlap_weight = self.config.interaction.focus_move_overlap_weight;
 
-        let Some(tab) = self.active_tab_mut() else {
-            return;
+        let (moved, tab_id, pane_id) = {
+            let Some(tab) = self.active_tab_mut() else {
+                return;
+            };
+            let (rects, _) = tab.pane_rects(buffer_width as usize, pane_height);
+            let moved = tab.focus_move(dir, positive, &rects, overlap_weight);
+            (moved, tab.id, tab.focused_pane)
         };
 
-        let (rects, _) = tab.pane_rects(buffer_width as usize, pane_height);
-        if tab.focus_move(dir, positive, &rects, overlap_weight) {
+        if moved {
             self.refresh_active_tab_title_from_focused_pane();
             self.update_cursor();
             self.request_redraw();
+            let direction = match (dir, positive) {
+                (SplitDir::Vertical, false) => "left",
+                (SplitDir::Vertical, true) => "right",
+                (SplitDir::Horizontal, false) => "up",
+                (SplitDir::Horizontal, true) => "down",
+            };
+            let cwd = self.cwd_for_event(Some(tab_id), Some(pane_id));
+            self.dispatch_plugin_event(PluginEvent {
+                event: "pane_focus_changed".to_string(),
+                action: None,
+                source: None,
+                tab_id: Some(tab_id),
+                pane_id: Some(pane_id),
+                data: Some(json!({ "direction": direction, "cwd": cwd })),
+            });
         }
     }
 
@@ -267,6 +295,8 @@ impl App {
 
     /// Closes the focused pane in the active tab.
     fn close_focused_pane(&mut self) {
+        let tab_id = self.active_tab().map(|t| t.id);
+        let previous_focus = self.active_tab().map(|t| t.focused_pane);
         let should_close_tab = self
             .active_tab_mut()
             .map(|t| t.close_focused_pane())
@@ -280,6 +310,34 @@ impl App {
         self.refresh_active_tab_title_from_focused_pane();
         self.update_cursor();
         self.request_redraw();
+
+        if let (Some(tab_id), Some(pane_id)) = (tab_id, previous_focus) {
+            let cwd = self.cwd_for_event(Some(tab_id), Some(pane_id));
+            self.dispatch_plugin_event(PluginEvent {
+                event: "pane_closed".to_string(),
+                action: None,
+                source: None,
+                tab_id: Some(tab_id),
+                pane_id: Some(pane_id),
+                data: Some(json!({ "cwd": cwd })),
+            });
+        }
+
+        let current_focus = self.active_tab().map(|t| t.focused_pane);
+        let current_tab_id = self.active_tab().map(|t| t.id);
+        if current_focus != previous_focus {
+            if let (Some(tab_id), Some(pane_id)) = (current_tab_id, current_focus) {
+                let cwd = self.cwd_for_event(Some(tab_id), Some(pane_id));
+                self.dispatch_plugin_event(PluginEvent {
+                    event: "pane_focus_changed".to_string(),
+                    action: None,
+                    source: None,
+                    tab_id: Some(tab_id),
+                    pane_id: Some(pane_id),
+                    data: Some(json!({ "reason": "close", "cwd": cwd })),
+                });
+            }
+        }
     }
 
     /// Splits the focused pane in the given direction.
@@ -292,12 +350,16 @@ impl App {
             .shell_integration
             .shadow_prompt_enabled_by_default;
         let proxy = self.event_proxy.clone();
+        let cwd = self.active_pane_cwd_path();
 
         // Get the current focused pane's rect
         let focused_rect = self.focused_pane_rect();
 
-        if let Some(tab) = self.active_tab_mut() {
-            if tab.split_focused(
+        let (new_pane, tab_id) = {
+            let Some(tab) = self.active_tab_mut() else {
+                return;
+            };
+            let new_pane = tab.split_focused(
                 dir,
                 scale,
                 scrollback,
@@ -305,11 +367,28 @@ impl App {
                 focused_rect,
                 min_size,
                 shadow_default,
-            ) {
-                self.layout_dirty = true;
-                self.refresh_active_tab_title_from_focused_pane();
-                self.request_redraw();
-            }
+                cwd.as_deref(),
+            );
+            (new_pane, tab.id)
+        };
+
+        if let Some(new_pane) = new_pane {
+            self.layout_dirty = true;
+            self.refresh_active_tab_title_from_focused_pane();
+            self.request_redraw();
+            let direction = match dir {
+                SplitDir::Vertical => "vertical",
+                SplitDir::Horizontal => "horizontal",
+            };
+            let cwd = self.cwd_for_event(Some(tab_id), Some(new_pane));
+            self.dispatch_plugin_event(PluginEvent {
+                event: "pane_split".to_string(),
+                action: None,
+                source: None,
+                tab_id: Some(tab_id),
+                pane_id: Some(new_pane),
+                data: Some(json!({ "direction": direction, "cwd": cwd })),
+            });
         }
     }
 

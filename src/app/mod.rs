@@ -11,7 +11,9 @@ mod context_menu;
 mod help_filter;
 mod keyboard;
 mod mouse;
+mod plugins;
 mod pty;
+mod prompt;
 mod shell_integration;
 mod tabs_state;
 mod url;
@@ -19,9 +21,12 @@ mod winit_handler;
 
 pub use context_menu::{ContextMenu, ContextMenuAction};
 pub use help_filter::HelpFilterState;
+pub use plugins::{PluginCommand, PluginManager};
 pub use pty::spawn_pty_reader;
+pub use prompt::{PromptKind, PromptState};
 
 use std::time::Instant;
+use std::collections::HashMap;
 
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
@@ -51,6 +56,7 @@ pub enum AppEvent {
     },
     /// PTY has closed (shell exited).
     PtyExited { tab: TabId, pane: PaneId },
+    PluginCommands { plugin: String, commands: Vec<PluginCommand> },
 }
 
 /// Main application state.
@@ -76,6 +82,13 @@ pub struct App {
     pub help_scroll: usize,
     pub help_max_scroll: usize,
     pub help_filter: HelpFilterState,
+    pub prompt: Option<PromptState>,
+    pub prompt_owners: HashMap<String, String>,
+    pub state_owners: HashMap<String, String>,
+    pub clipboard_owners: HashMap<String, String>,
+    pub plugins: PluginManager,
+    plugin_dispatch_depth: usize,
+    plugins_started: bool,
     pub shell_warning_dismissed: bool,
     pub should_exit: bool,
     last_window_title: Option<String>,
@@ -90,6 +103,7 @@ pub struct App {
 impl App {
     /// Creates a new application with the given configuration.
     pub fn new(config: Config) -> Self {
+        let plugins = PluginManager::new(&config);
         let app = App {
             config,
             tabs: Vec::new(),
@@ -108,6 +122,13 @@ impl App {
             help_scroll: 0,
             help_max_scroll: 0,
             help_filter: HelpFilterState::new(),
+            prompt: None,
+            prompt_owners: HashMap::new(),
+            state_owners: HashMap::new(),
+            clipboard_owners: HashMap::new(),
+            plugins,
+            plugin_dispatch_depth: 0,
+            plugins_started: false,
             shell_warning_dismissed: false,
             should_exit: false,
             last_window_title: None,
@@ -166,6 +187,7 @@ impl App {
     fn reload_config(&mut self) {
         self.config = Config::load();
         self.sync_font_scale_clamp();
+        self.plugins.reload(&self.config);
 
         // Update palette immediately for ANSI colors/themes.
         if let Some(graphics) = &mut self.graphics {
@@ -182,6 +204,14 @@ impl App {
         self.layout_dirty = true;
         self.show_toast("Config reloaded");
         self.request_redraw();
+        self.dispatch_plugin_event(plugins::PluginEvent {
+            event: "config_reload".to_string(),
+            action: None,
+            source: None,
+            tab_id: self.active_tab().map(|t| t.id),
+            pane_id: self.active_tab().map(|t| t.focused_pane),
+            data: None,
+        });
     }
 
     fn sync_font_scale_clamp(&self) {

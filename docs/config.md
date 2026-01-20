@@ -122,6 +122,34 @@ Notes:
 - The default allowed font scale range is `1..=8`.
 - You can override that clamp range via `[experimental.font_scale_clamp]` (see below).
 
+#### Font Scale Details
+
+**Supported Values:**
+- Accepts fractional values in 0.25 increments (e.g., 1.0, 1.25, 1.5, 1.75, 2.0)
+- Range: 0.25 to 64.0 (further constrained by `experimental.font_scale_clamp`)
+- Default: 1.0
+
+**Why 0.25 Increments?**
+Provides fine-grained control while keeping glyph cache size manageable. Each scale value pre-renders glyphs, so finer increments would increase memory without proportional UX benefit.
+
+**Migration from Integer Scaling:**
+Previous configs used integers (1-8). These still work. You can now use fractional values:
+- Example: `scale = 1.5` for 150% base font size
+- Keybindings increment/decrement by 0.25
+
+**Example:**
+```toml
+[font]
+scale = 1.5  # 150% base size
+
+[experimental.font_scale_clamp]
+min = 0.5    # Allow smaller zoom
+max = 4.0    # Restrict maximum zoom
+```
+
+**Font Reload Behavior:**
+Changing `font.scale` takes effect via config reload (Ctrl+Shift+R) or keybindings. Changing `font.family` requires restarting yatmux, as fonts are loaded once and cached for the application lifetime.
+
 ### `[pane]`
 
 All padding values are pixels.
@@ -164,19 +192,56 @@ They don’t emit OSC sequences by themselves.
 
 ### `[interaction]`
 
-### `[experimental]`
+### `[plugins]`
 
-This section is intentionally unstable and may change.
-
-#### `[experimental.font_scale_clamp]`
-
-- `min` (f32): `1.0`
-- `max` (f32): `8.0`
+- `enabled` (bool): `true`
+- `enable_default_dir` (bool): `true` (loads from `~/.config/yatmux/plugins`)
+- `paths` (array of strings): `[]` (extra plugin paths)
 
 Notes:
 
-- This affects `[font].scale`, pane zoom, and UI font scales (tab bar/help/toast).
-- Values are additionally safety-clamped to `0.25..=64.0`.
+- Each plugin lives in a directory containing `plugin.sh`.
+- Paths can be files (direct `plugin.sh`) or directories. Directories without `plugin.sh` are scanned for subdirectories containing `plugin.sh`.
+- Relative paths are resolved relative to `config.toml`.
+- `~` and `~/...` expand to the current user home directory.
+
+### `[experimental]`
+
+⚠️ **Experimental Section** - Features here may change in future versions.
+
+#### `[experimental.font_scale_clamp]`
+
+Override the default font scale range (1.0-8.0) to support extreme zoom levels or restrict scaling.
+
+- `min` (f32): `1.0` - Minimum allowed font scale
+- `max` (f32): `8.0` - Maximum allowed font scale
+
+**Notes:**
+- Affects `[font].scale`, pane zoom, and UI font scales (tab bar, help, toasts)
+- Values are safety-clamped to `0.25..=64.0` to prevent rendering issues
+- Changing these values clears the glyph cache
+
+**Use Cases:**
+
+1. **Accessibility** - Support larger scales:
+   ```toml
+   [experimental.font_scale_clamp]
+   max = 16.0
+   ```
+
+2. **Presentation Mode** - Wide range for demos:
+   ```toml
+   [experimental.font_scale_clamp]
+   min = 0.5
+   max = 12.0
+   ```
+
+3. **Restricted Environment** - Limit customization:
+   ```toml
+   [experimental.font_scale_clamp]
+   min = 1.0
+   max = 2.0
+   ```
 
 - `click_move_max_steps` (usize): `512`
 - `pane_resize_step` (float): `0.05`

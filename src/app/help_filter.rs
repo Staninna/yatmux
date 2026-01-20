@@ -75,8 +75,6 @@ impl HelpFilterState {
                 bindings: section.bindings.iter().map(|(key, action)| FilteredBinding {
                     key: key.clone(),
                     action: action.clone(),
-                    key_matches: Vec::new(),
-                    action_matches: Vec::new(),
                     score: 0,
                 }).collect(),
             }).collect();
@@ -117,8 +115,6 @@ impl HelpFilterState {
                     filtered_bindings.push(FilteredBinding {
                         key: key.clone(),
                         action: action.clone(),
-                        key_matches: key_indices,
-                        action_matches: action_indices,
                         score: best_score as i32,
                     });
                 }
@@ -152,21 +148,7 @@ pub struct FilteredHelpSection {
 pub struct FilteredBinding {
     pub key: String,
     pub action: String,
-    pub key_matches: Vec<u32>,      // Character indices that matched in key
-    pub action_matches: Vec<u32>,   // Character indices that matched in action
     pub score: i32,                 // Relevance score for sorting
-}
-
-impl FilteredHelpSection {
-    /// Converts back to a simple HelpSection (for rendering when filter is inactive).
-    pub fn to_help_section(&self) -> HelpSection {
-        HelpSection {
-            title: self.title.clone(),
-            bindings: self.bindings.iter()
-                .map(|b| (b.key.clone(), b.action.clone()))
-                .collect(),
-        }
-    }
 }
 
 #[cfg(test)]

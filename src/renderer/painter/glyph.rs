@@ -114,49 +114,6 @@ impl Renderer {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn draw_scaled_glyph(
-        &self,
-        backbuffer: &mut [u32],
-        width: usize,
-        height: usize,
-        x0: usize,
-        y0: usize,
-        target_w: usize,
-        target_h: usize,
-        glyph_data: &[u8],
-        glyph_width: usize,
-        glyph_height: usize,
-        color: u32,
-    ) {
-        if glyph_width == 0 || glyph_height == 0 {
-            return;
-        }
-
-        // Simple nearest-neighbor scaling
-        for ty in 0..target_h {
-            let src_y = (ty * glyph_height / target_h).min(glyph_height - 1);
-            let y = y0 + ty;
-            if y >= height {
-                break;
-            }
-
-            for tx in 0..target_w {
-                let src_x = (tx * glyph_width / target_w).min(glyph_width - 1);
-                let x = x0 + tx;
-                if x >= width {
-                    break;
-                }
-
-                let alpha = glyph_data[src_y * glyph_width + src_x];
-
-                if alpha > 128 {
-                    backbuffer[y * width + x] = color;
-                }
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn draw_native_glyph(
         &self,
         backbuffer: &mut [u32],

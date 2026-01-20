@@ -326,6 +326,11 @@ impl Config {
         out.push_str("# pane_resize_step = 0.05\n");
         out.push_str("# focus_move_overlap_weight = 1000\n\n");
 
+        out.push_str("[plugins]\n");
+        out.push_str("# enabled = true\n");
+        out.push_str("# enable_default_dir = true\n");
+        out.push_str("# paths = [\"~/dotfiles/yatmux/plugins\", \"./local-plugins\"]\n\n");
+
         out.push_str("[keybinds]\n");
         out.push_str("# \"ctrl+shift+r\" = \"reload_config\"\n");
         out.push_str("# \"ctrl+shift+-\" = \"none\"\n");

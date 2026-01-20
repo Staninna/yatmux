@@ -1,12 +1,12 @@
 //! Scrollback buffer management for the terminal.
 //!
-//! This module provides scrollback support by combining vt100's native scrollback
-//! tracking with our own history storage. vt100 correctly tracks when lines scroll
+//! This module provides scrollback support by combining the terminal model's native scrollback
+//! tracking with our own history storage. The model correctly tracks when lines scroll
 //! off, but its API only allows viewing `view_rows` lines of history at a time.
 //! We maintain our own copy for full history access (e.g., for search).
 
 use std::collections::VecDeque;
-use vt100::Color;
+use crate::core::color::Color;
 
 use crate::constants::SCROLLBACK_CAPACITY;
 
@@ -14,9 +14,9 @@ use crate::core::grid::RowSnapshot;
 
 /// Manages the scrollback buffer for terminal history.
 ///
-/// Uses vt100's scrollback length changes to detect when lines scroll off,
+/// Uses the model's scrollback length changes to detect when lines scroll off,
 /// then stores those lines in our own history buffer. This gives us:
-/// - Reliable detection (vt100 handles rapid output correctly)
+/// - Reliable detection (the model handles rapid output correctly)
 /// - Full history access (for search and arbitrary scrolling)
 pub struct ScrollbackBuffer {
     /// Historical lines that have scrolled off the top.
@@ -29,8 +29,8 @@ pub struct ScrollbackBuffer {
     view_rows: usize,
     /// Number of columns in the terminal view.
     view_cols: usize,
-    /// vt100's scrollback length from the last frame.
-    last_vt100_scrollback_len: usize,
+    /// Terminal model's scrollback length from the last frame.
+    last_scrollback_len: usize,
 }
 
 impl Default for ScrollbackBuffer {
@@ -53,7 +53,7 @@ impl ScrollbackBuffer {
             offset: 0,
             view_rows: 0,
             view_cols: 0,
-            last_vt100_scrollback_len: 0,
+            last_scrollback_len: 0,
         }
     }
 
@@ -94,25 +94,25 @@ impl ScrollbackBuffer {
     pub fn clear(&mut self) {
         self.history.clear();
         self.offset = 0;
-        self.last_vt100_scrollback_len = 0;
+        self.last_scrollback_len = 0;
     }
 
-    /// Resets the vt100 scrollback tracking without clearing history.
-    /// Call this after terminal resize when vt100's scrollback may have been reset.
-    pub fn reset_vt100_tracking(&mut self, new_vt100_len: usize) {
-        self.last_vt100_scrollback_len = new_vt100_len;
+    /// Resets the scrollback tracking without clearing history.
+    /// Call this after terminal resize when the model's scrollback may have been reset.
+    pub fn reset_scrollback_tracking(&mut self, new_len: usize) {
+        self.last_scrollback_len = new_len;
     }
 
-    /// Returns the last known vt100 scrollback length.
-    pub fn last_vt100_scrollback_len(&self) -> usize {
-        self.last_vt100_scrollback_len
+    /// Returns the last known scrollback length from the terminal model.
+    pub fn last_scrollback_len(&self) -> usize {
+        self.last_scrollback_len
     }
 
-    /// Adds newly captured history rows and updates the vt100 scrollback length.
+    /// Adds newly captured history rows and updates the scrollback length.
     ///
-    /// `new_rows`: Rows captured from vt100 that just scrolled off (oldest first)
-    /// `current_vt100_len`: Current scrollback length from vt100
-    pub fn add_history_rows(&mut self, new_rows: Vec<RowSnapshot>, current_vt100_len: usize) {
+    /// `new_rows`: Rows captured from the terminal model that just scrolled off (oldest first)
+    /// `current_len`: Current scrollback length from the terminal model
+    pub fn add_history_rows(&mut self, new_rows: Vec<RowSnapshot>, current_len: usize) {
         let new_lines = new_rows.len();
 
         // Add new rows to history - we keep their original width
@@ -128,7 +128,7 @@ impl ScrollbackBuffer {
             self.offset = (self.offset + new_lines).min(self.history.len());
         }
 
-        self.last_vt100_scrollback_len = current_vt100_len;
+        self.last_scrollback_len = current_len;
     }
 
     /// Scrolls by the given number of lines (positive = up into history, negative = down toward live).
