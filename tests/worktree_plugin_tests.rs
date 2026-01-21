@@ -58,6 +58,13 @@ fn parse_json_lines(stdout: &str) -> Vec<Value> {
 }
 
 #[cfg(unix)]
+fn find_command<'a>(commands: &'a [Value], name: &str) -> Option<&'a Value> {
+    commands
+        .iter()
+        .find(|cmd| cmd.get("command").and_then(Value::as_str) == Some(name))
+}
+
+#[cfg(unix)]
 fn install_fake_git(bin_dir: &PathBuf) -> PathBuf {
     let script = r#"#!/usr/bin/env bash
 set -euo pipefail
@@ -91,6 +98,26 @@ fi
 exit 0
 "#;
     write_script(bin_dir, "git", &script)
+}
+
+#[cfg(unix)]
+fn run_worktree_plugin(
+    event_json: &str,
+    plugin_root: &PathBuf,
+    repo: &PathBuf,
+    bin_dir: &PathBuf,
+) -> std::process::Output {
+    Command::new("bash")
+        .arg("examples/plugins/worktree/plugin.sh")
+        .env("YATMUX_PLUGIN_EVENT", event_json)
+        .env("YATMUX_PLUGIN_ROOT", plugin_root)
+        .env("YATMUX_TEST_GIT_REPO", repo)
+        .env(
+            "PATH",
+            format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default()),
+        )
+        .output()
+        .expect("run worktree plugin")
 }
 
 #[test]
@@ -535,14 +562,7 @@ fn test_worktree_plugin_runtime_sync_flow() {
         r#"{{"event":"plugin_command","data":{{"plugin":"worktree","command":"sync","cwd":"{}","args":{{"close_orphans":true}}}}}}"#,
         repo.display()
     );
-    let output = Command::new("bash")
-        .arg("examples/plugins/worktree/plugin.sh")
-        .env("YATMUX_PLUGIN_EVENT", sync_event)
-        .env("YATMUX_PLUGIN_ROOT", &plugin_root)
-        .env("YATMUX_TEST_GIT_REPO", &repo)
-        .env("PATH", format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default()))
-        .output()
-        .expect("run worktree plugin");
+    let output = run_worktree_plugin(&sync_event, &plugin_root, &repo, &bin_dir);
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -563,14 +583,7 @@ fn test_worktree_plugin_runtime_sync_flow() {
         }
     });
 
-    let output = Command::new("bash")
-        .arg("examples/plugins/worktree/plugin.sh")
-        .env("YATMUX_PLUGIN_EVENT", state_event.to_string())
-        .env("YATMUX_PLUGIN_ROOT", &plugin_root)
-        .env("YATMUX_TEST_GIT_REPO", &repo)
-        .env("PATH", format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default()))
-        .output()
-        .expect("run worktree plugin state_response");
+    let output = run_worktree_plugin(&state_event.to_string(), &plugin_root, &repo, &bin_dir);
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -578,4 +591,124 @@ fn test_worktree_plugin_runtime_sync_flow() {
     assert!(commands.iter().any(|cmd| cmd.get("command").and_then(Value::as_str) == Some("set_tab_title")));
     assert!(commands.iter().any(|cmd| cmd.get("command").and_then(Value::as_str) == Some("new_tab")));
     assert!(commands.iter().any(|cmd| cmd.get("command").and_then(Value::as_str) == Some("close_tab")));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_worktree_plugin_runtime_close_flow_e2e() {
+    if !has_python3() {
+        return;
+    }
+    let temp = TempDir::new();
+    let repo = temp.path.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let plugin_root = temp.path.join("plugin-root");
+    fs::create_dir_all(&plugin_root).unwrap();
+    let bin_dir = temp.path.join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    install_fake_git(&bin_dir);
+
+    let close_event = format!(
+        r#"{{"event":"plugin_command","data":{{"plugin":"worktree","command":"close","cwd":"{}"}}}}"#,
+        repo.display()
+    );
+    let output = run_worktree_plugin(&close_event, &plugin_root, &repo, &bin_dir);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let commands = parse_json_lines(&String::from_utf8_lossy(&output.stdout));
+    let confirm = find_command(&commands, "confirm").expect("expected confirm command");
+    let confirm_id = confirm
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("confirm id");
+
+    let confirm_response = serde_json::json!({
+        "event": "prompt_response",
+        "data": {
+            "id": confirm_id,
+            "ok": true
+        }
+    });
+    let output = run_worktree_plugin(
+        &confirm_response.to_string(),
+        &plugin_root,
+        &repo,
+        &bin_dir,
+    );
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let commands = parse_json_lines(&String::from_utf8_lossy(&output.stdout));
+    let request = find_command(&commands, "request_state").expect("expected request_state");
+    let request_id = request
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("request_state id");
+    assert!(request_id.starts_with("wt-close-"));
+
+    let tabs_json = serde_json::json!([
+        {"id": 1, "cwd": repo.display().to_string()},
+        {"id": 2, "cwd": format!("{}/.worktrees/feature", repo.display())}
+    ]);
+    let state_event = serde_json::json!({
+        "event": "state_response",
+        "data": {
+            "id": request_id,
+            "tabs": tabs_json
+        }
+    });
+    let output = run_worktree_plugin(&state_event.to_string(), &plugin_root, &repo, &bin_dir);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let commands = parse_json_lines(&String::from_utf8_lossy(&output.stdout));
+    let pick = find_command(&commands, "pick").expect("expected pick command");
+    let pick_id = pick.get("id").and_then(Value::as_str).expect("pick id");
+
+    let pick_response = serde_json::json!({
+        "event": "prompt_response",
+        "data": {
+            "id": pick_id,
+            "ok": true,
+            "index": 1
+        }
+    });
+    let output = run_worktree_plugin(&pick_response.to_string(), &plugin_root, &repo, &bin_dir);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let commands = parse_json_lines(&String::from_utf8_lossy(&output.stdout));
+    let request = find_command(&commands, "request_state").expect("expected request_state after pick");
+    let request_id = request
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("request_state id");
+    assert!(request_id.starts_with("wt-close-path-"));
+
+    let state_event = serde_json::json!({
+        "event": "state_response",
+        "data": {
+            "id": request_id,
+            "tabs": tabs_json
+        }
+    });
+    let output = run_worktree_plugin(&state_event.to_string(), &plugin_root, &repo, &bin_dir);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let commands = parse_json_lines(&String::from_utf8_lossy(&output.stdout));
+    assert!(commands
+        .iter()
+        .any(|cmd| cmd.get("command").and_then(Value::as_str) == Some("close_tab")));
 }
