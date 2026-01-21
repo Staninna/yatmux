@@ -76,6 +76,7 @@ What it emits:
 ## Notes / gotchas
 
 - Without OSC markers, yatmux still works; shell integration features just stay inactive.
+- If you already use `PROMPT_COMMAND` (e.g., zoxide), the integration script appends safely.
 - Shadow prompt is disabled automatically for alt-screen apps (vim/less/htop), because it would interfere.
 - Shadow prompt relies on OSC 133 markers to detect prompt return; without OSC 133, buffered type-ahead may never flush automatically.
 - Sticky prompt also relies on semantic prompt zones; without OSC 133 markers, it won’t have prompt boundaries to display.

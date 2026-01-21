@@ -288,9 +288,19 @@ for item in _wt:
 if close_orphans:
     wt_paths=set([item.get("path") for item in _wt if item.get("path")])
     for tab in _tabs:
-        cwd=tab.get("cwd")
-        if cwd and cwd not in wt_paths:
-            print(json.dumps({"command":"close_tab","tab_id":tab["id"]}))
+        pane_cwds=tab.get("pane_cwds") or {}
+        if isinstance(pane_cwds, dict) and pane_cwds:
+            for pane_id, cwd in pane_cwds.items():
+                if cwd and cwd not in wt_paths:
+                    try:
+                        pane_id_int=int(pane_id)
+                    except Exception:
+                        continue
+                    print(json.dumps({"command":"close_pane","tab_id":tab["id"],"pane_id":pane_id_int}))
+        else:
+            cwd=tab.get("cwd")
+            if cwd and cwd not in wt_paths:
+                print(json.dumps({"command":"close_tab","tab_id":tab["id"]}))
 '
 }
 

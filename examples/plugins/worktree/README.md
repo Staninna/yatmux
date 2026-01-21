@@ -17,10 +17,13 @@ Manage git worktrees directly from yatmux tabs. Open multiple branches simultane
 
 ## Commands
 
+> Note: `ctrl+shift+w` is the default **close pane** binding in yatmux.
+> Use different keys for worktree commands to avoid overriding it.
+
 ### Create New Worktree
 ```toml
 [[keybind]]
-key = "ctrl+shift+w"
+key = "ctrl+alt+w"
 action = { type = "plugin", name = "worktree", args = { command = "new" } }
 ```
 
@@ -53,7 +56,7 @@ Shows picker with all worktrees. If tab already exists for worktree, focuses it.
 ### Close Worktree
 ```toml
 [[keybind]]
-key = "ctrl+shift+d"
+key = "ctrl+alt+d"
 action = { type = "plugin", name = "worktree", args = { command = "close" } }
 ```
 
@@ -78,16 +81,17 @@ The tab is only closed if it ends up empty after those panes are removed.
 ### Sync Tabs with Worktrees
 ```toml
 [[keybind]]
-key = "ctrl+shift+s"
+key = "ctrl+alt+s"
 action = { type = "plugin", name = "worktree", args = { command = "sync" } }
 ```
 
 Creates tabs for all worktrees that don't have tabs yet. Updates tab titles to match branch names.
 
-**Close orphaned tabs:**
+**Close orphaned panes:**
 ```toml
 action = { type = "plugin", name = "worktree", args = { command = "sync", close_orphans = true } }
 ```
+When enabled, panes whose cwd no longer exists as a worktree are closed. Tabs close automatically if they become empty.
 
 ## Usage Example
 
@@ -96,15 +100,15 @@ action = { type = "plugin", name = "worktree", args = { command = "sync", close_
 cd ~/projects/myapp
 
 # Create worktrees for different features
-Ctrl+Shift+W → "feature/auth"
-Ctrl+Shift+W → "feature/ui"
-Ctrl+Shift+W → "bugfix/crash"
+Ctrl+Alt+W → "feature/auth"
+Ctrl+Alt+W → "feature/ui"
+Ctrl+Alt+W → "bugfix/crash"
 
 # Switch between them
 Alt+W → select worktree → tab focuses or opens
 
 # When done with a worktree
-Ctrl+Shift+D → select worktree → removed
+Ctrl+Alt+D → select worktree → removed
 ```
 
 ## Configuration

@@ -97,7 +97,14 @@ __yatmux_add_prompt_command() {
 
   # Append (not prepend) so we run AFTER other prompt commands that may set PS1.
   if [[ -n ${PROMPT_COMMAND-} ]]; then
-    PROMPT_COMMAND="${PROMPT_COMMAND}; __yatmux_prompt_command"
+    # Trim trailing semicolons/whitespace to avoid ";;" syntax errors.
+    local trimmed
+    trimmed="$(printf '%s' "$PROMPT_COMMAND" | sed -e 's/[[:space:]]*$//' -e 's/;*$//')"
+    if [[ "$trimmed" == *"__yatmux_prompt_command"* ]]; then
+      PROMPT_COMMAND="$trimmed"
+    else
+      PROMPT_COMMAND="${trimmed}; __yatmux_prompt_command"
+    fi
   else
     PROMPT_COMMAND="__yatmux_prompt_command"
   fi

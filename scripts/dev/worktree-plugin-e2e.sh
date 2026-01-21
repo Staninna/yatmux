@@ -433,14 +433,14 @@ fi
 
 # sync with orphan tab
 step "sync -> request_state"
-orphan_tabs='[{"id":42,"title":"orphan","focused_pane":1,"panes":[1],"cwd":"'$repo'/ghost"}]'
+orphan_tabs='[{"id":42,"title":"orphan","focused_pane":1,"panes":[1],"cwd":"'$repo'/ghost","pane_cwds":{"1":"'$repo'/ghost"}}]'
 out="$(run_plugin '{"event":"plugin_command","data":{"plugin":"worktree","command":"sync","cwd":"'$repo'","args":{"close_orphans":true}}}')"
 expect_command "$out" "request_state"
 req_id="$(json_field id "$(printf '%s\n' "$out" | head -n1)")"
 
-step "state_response(sync) -> close_tab + new_tab"
+step "state_response(sync) -> close_pane + new_tab"
 out="$(run_plugin '{"event":"state_response","data":{"id":"'$req_id'","tabs":'$orphan_tabs'}}')"
-expect_contains_command "$out" "close_tab"
+expect_contains_command "$out" "close_pane"
 expect_contains_command "$out" "new_tab"
 
 # sync without close_orphans -> new_tab only
@@ -457,7 +457,7 @@ lines=sys.stdin.read().splitlines()
 for line in lines:
     if not line.strip():
         continue
-    if json.loads(line).get("command")=="close_tab":
+    if json.loads(line).get("command")=="close_pane":
         sys.exit(1)
 sys.exit(0)
 PY

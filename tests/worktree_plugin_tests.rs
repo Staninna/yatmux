@@ -604,7 +604,7 @@ fn test_worktree_plugin_runtime_sync_flow() {
     let commands = parse_json_lines(&stdout);
     assert!(commands.iter().any(|cmd| cmd.get("command").and_then(Value::as_str) == Some("set_tab_title")));
     assert!(commands.iter().any(|cmd| cmd.get("command").and_then(Value::as_str) == Some("new_tab")));
-    assert!(commands.iter().any(|cmd| cmd.get("command").and_then(Value::as_str) == Some("close_tab")));
+    assert!(commands.iter().any(|cmd| cmd.get("command").and_then(Value::as_str) == Some("close_pane")));
 }
 
 #[cfg(unix)]
