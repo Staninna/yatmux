@@ -199,6 +199,7 @@ They don’t emit OSC sequences by themselves.
 - `enable_default_dir` (bool): `true` (loads from `~/.config/yatmux/plugins`)
 - `paths` (array of strings): `[]` (extra plugin paths)
 
+
 Notes:
 
 - Each plugin lives in a directory containing `plugin.sh`.
