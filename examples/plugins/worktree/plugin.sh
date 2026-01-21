@@ -4,8 +4,27 @@ set -euo pipefail
 # Configuration
 # Number of days after which to clean up old state files (0 to disable cleanup)
 STATE_CLEANUP_DAYS=${WORKTREE_STATE_CLEANUP_DAYS:-1}
-# Require an extra confirmation after selecting a worktree to close (0 to disable)
-CLOSE_CONFIRM_AFTER_PICK=${WORKTREE_CLOSE_CONFIRM_AFTER_PICK:-1}
+# Require an extra confirmation after selecting a worktree to close (0 to disable).
+# Source: config.toml ([plugins.worktree]) with a default of enabled.
+CLOSE_CONFIRM_AFTER_PICK="$(
+    python3 - <<'PY' 2>/dev/null || echo 1
+import os, sys
+path = os.environ.get("YATMUX_CONFIG_PATH") or ""
+if not path:
+    sys.exit(1)
+try:
+    import tomllib
+except Exception:
+    sys.exit(1)
+try:
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+except Exception:
+    sys.exit(1)
+val = data.get("plugins", {}).get("worktree", {}).get("close_confirm_after_pick", True)
+print(1 if bool(val) else 0)
+PY
+)"
 
 event_json="${YATMUX_PLUGIN_EVENT:-}"
 if [ -z "$event_json" ]; then

@@ -63,11 +63,14 @@ Tabs close automatically if they become empty.
 ⚠️ **Warning:** This is destructive! Uncommitted changes may be lost.
 
 By default, there is an extra confirmation **after** you pick a worktree (safer).
-You can disable the extra confirmation:
+You can disable the extra confirmation by adding this to your config:
 
-```bash
-export WORKTREE_CLOSE_CONFIRM_AFTER_PICK=0
+```toml
+[plugins.worktree]
+close_confirm_after_pick = false
 ```
+
+Note: this setting is read by the plugin itself (not validated by yatmux).
 
 If a worktree is open in multiple panes, the plugin will close **all matching panes**.
 The tab is only closed if it ends up empty after those panes are removed.
