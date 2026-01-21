@@ -57,9 +57,20 @@ key = "ctrl+shift+d"
 action = { type = "plugin", name = "worktree", args = { command = "close" } }
 ```
 
-Shows picker to select worktree to remove. Runs `git worktree remove` and closes tab.
+Shows picker to select worktree to remove. Runs `git worktree remove` and closes any panes in that worktree.
+Tabs close automatically if they become empty.
 
 ⚠️ **Warning:** This is destructive! Uncommitted changes may be lost.
+
+By default, there is an extra confirmation **after** you pick a worktree (safer).
+You can disable the extra confirmation:
+
+```bash
+export WORKTREE_CLOSE_CONFIRM_AFTER_PICK=0
+```
+
+If a worktree is open in multiple panes, the plugin will close **all matching panes**.
+The tab is only closed if it ends up empty after those panes are removed.
 
 ### Sync Tabs with Worktrees
 ```toml
@@ -126,6 +137,51 @@ Alternatively, edit the plugin script directly and change the `STATE_CLEANUP_DAY
 2. **Tab Matching:** Compares tab CWDs with worktree paths
 3. **Branch Detection:** Parses `git worktree list --porcelain` output
 4. **Smart Reuse:** Avoids creating duplicate tabs for same worktree
+
+## Behavior Contract
+
+This plugin follows a strict event → command flow so it can run safely inside yatmux:
+
+### Startup
+- `startup` → `subscribe` to `plugin_command`, `prompt_response`, `state_response`
+- If python3 is missing → `toast` and exit
+
+### `new`
+- If `branch` is missing → `prompt`
+  - `prompt_response(ok=true)` → create worktree → `new_tab`
+  - `prompt_response(ok=false)` → emit nothing
+- If `branch` is provided → create worktree → `new_tab`
+- If `path`/`base_dir` is provided → create worktree at that path → `new_tab`
+
+### `switch`
+- If no args → `request_state` → `pick`
+  - `prompt_response(ok=true,index)` → `request_state` → `focus_tab` or `new_tab`
+- If `branch` or `path` is provided → `request_state` → `focus_tab` or `new_tab`
+
+### `close`
+- Always `confirm` first
+  - `prompt_response(ok=false)` → emit nothing
+  - `prompt_response(ok=true)` → `request_state` → `pick`
+    - `prompt_response(ok=true,index)` → `request_state` → `close_tab` (if tab matches)
+
+### `sync`
+- `request_state` → emits `new_tab` for missing worktrees
+- If `close_orphans=true` → also emits `close_tab` for tabs not backed by worktrees
+
+### Errors
+- If not in a git repo → `toast` and exit
+
+## End-to-End Script
+
+Run the full e2e exercise:
+```bash
+scripts/dev/worktree-plugin-e2e.sh
+```
+
+Verbose step-by-step output:
+```bash
+VERBOSE=1 scripts/dev/worktree-plugin-e2e.sh
+```
 
 ## Troubleshooting
 

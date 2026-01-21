@@ -334,6 +334,10 @@ fn test_worktree_plugin_has_emit_functions() {
         plugin_src.contains("emit_close_tab()"),
         "Plugin should have emit_close_tab function"
     );
+    assert!(
+        plugin_src.contains("emit_close_pane()"),
+        "Plugin should have emit_close_pane function"
+    );
 }
 
 #[test]
@@ -572,8 +576,18 @@ fn test_worktree_plugin_runtime_sync_flow() {
     assert!(id.starts_with("wt-sync-"));
 
     let tabs_json = serde_json::json!([
-        {"id": 1, "cwd": repo.display().to_string()},
-        {"id": 2, "cwd": repo.join("other").display().to_string()}
+        {
+            "id": 1,
+            "cwd": repo.display().to_string(),
+            "panes": [1],
+            "pane_cwds": { "1": repo.display().to_string() }
+        },
+        {
+            "id": 2,
+            "cwd": repo.join("other").display().to_string(),
+            "panes": [2],
+            "pane_cwds": { "2": repo.join("other").display().to_string() }
+        }
     ]);
     let state_event = serde_json::json!({
         "event": "state_response",
@@ -652,8 +666,18 @@ fn test_worktree_plugin_runtime_close_flow_e2e() {
     assert!(request_id.starts_with("wt-close-"));
 
     let tabs_json = serde_json::json!([
-        {"id": 1, "cwd": repo.display().to_string()},
-        {"id": 2, "cwd": format!("{}/.worktrees/feature", repo.display())}
+        {
+            "id": 1,
+            "cwd": repo.display().to_string(),
+            "panes": [1],
+            "pane_cwds": { "1": repo.display().to_string() }
+        },
+        {
+            "id": 2,
+            "cwd": format!("{}/.worktrees/feature", repo.display()),
+            "panes": [2],
+            "pane_cwds": { "2": format!("{}/.worktrees/feature", repo.display()) }
+        }
     ]);
     let state_event = serde_json::json!({
         "event": "state_response",
@@ -687,7 +711,33 @@ fn test_worktree_plugin_runtime_close_flow_e2e() {
         String::from_utf8_lossy(&output.stderr)
     );
     let commands = parse_json_lines(&String::from_utf8_lossy(&output.stdout));
-    let request = find_command(&commands, "request_state").expect("expected request_state after pick");
+    let confirm = find_command(&commands, "confirm").expect("expected confirm after pick");
+    let confirm_id = confirm
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("confirm id");
+
+    let confirm_response = serde_json::json!({
+        "event": "prompt_response",
+        "data": {
+            "id": confirm_id,
+            "ok": true
+        }
+    });
+    let output = run_worktree_plugin(
+        &confirm_response.to_string(),
+        &plugin_root,
+        &repo,
+        &bin_dir,
+    );
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let commands = parse_json_lines(&String::from_utf8_lossy(&output.stdout));
+    let request = find_command(&commands, "request_state")
+        .expect("expected request_state after confirm");
     let request_id = request
         .get("id")
         .and_then(Value::as_str)
@@ -710,5 +760,5 @@ fn test_worktree_plugin_runtime_close_flow_e2e() {
     let commands = parse_json_lines(&String::from_utf8_lossy(&output.stdout));
     assert!(commands
         .iter()
-        .any(|cmd| cmd.get("command").and_then(Value::as_str) == Some("close_tab")));
+        .any(|cmd| cmd.get("command").and_then(Value::as_str) == Some("close_pane")));
 }

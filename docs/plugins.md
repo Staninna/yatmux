@@ -47,6 +47,9 @@ Plugins in `~/.config/yatmux/plugins/` are loaded automatically.
 - `request_state` - Get app state (tabs, panes)
 - `clipboard_read` / `clipboard_write` - Access clipboard
 
+### Pane Commands
+- `close_pane` - Close a pane by `tab_id` and `pane_id`
+
 ### Meta Commands
 - `subscribe` - Listen to events
 - `config_patch` - Modify config
@@ -66,6 +69,22 @@ Plugins receive events as JSON:
 **Subscribe to events:**
 ```bash
 echo '{"command":"subscribe","events":["plugin_command","tab_changed"]}'
+```
+
+`state_response` payload now includes per-pane cwd mappings:
+```json
+{
+  "tabs": [
+    {
+      "id": 1,
+      "panes": [1, 2],
+      "pane_cwds": {
+        "1": "/path/one",
+        "2": "/path/two"
+      }
+    }
+  ]
+}
 ```
 
 ## Environment Variables
@@ -131,6 +150,17 @@ See `examples/plugins/` for real-world examples:
 - `worktree` - Git worktree management (advanced)
 - `tab-summary` - Display tab information
 - `send-snippet` - Code snippet insertion
+
+## Behavior Contracts
+
+For multi-step plugins, document the expected event → command flow so it stays testable and predictable.
+
+Example: worktree plugin (simplified)
+- `startup` → `subscribe`
+- `plugin_command:new` → `prompt` (if branch missing) → `prompt_response` → `new_tab`
+- `plugin_command:switch` → `request_state` → `pick` → `prompt_response` → `request_state` → `focus_tab`/`new_tab`
+- `plugin_command:close` → `confirm` → `prompt_response` → `request_state` → `pick` → `prompt_response` → `request_state` → `close_tab`
+- `plugin_command:sync` → `request_state` → `new_tab` (+ `close_tab` if `close_orphans=true`)
 
 ## Troubleshooting
 

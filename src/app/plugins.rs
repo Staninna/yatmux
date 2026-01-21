@@ -75,6 +75,7 @@ pub enum PluginCommand {
     },
     FocusTab { tab_id: u64 },
     CloseTab { tab_id: u64 },
+    ClosePane { tab_id: u64, pane_id: u64 },
     Subscribe { events: Vec<String> },
     ConfigPatch { toml: String, persist: Option<bool> },
     ReloadConfig,
@@ -317,6 +318,9 @@ impl App {
                 PluginCommand::CloseTab { tab_id } => {
                     self.close_tab_by_id(tab_id);
                 }
+                PluginCommand::ClosePane { tab_id, pane_id } => {
+                    self.close_pane_by_id(tab_id, pane_id);
+                }
                 PluginCommand::ConfigPatch { toml, persist } => {
                     let patch = match toml.parse::<toml::Value>() {
                         Ok(v) => v,
@@ -482,7 +486,12 @@ impl App {
         let pane_id = pane_id?;
         let tab = self.tabs.iter().find(|t| t.id == tab_id)?;
         let pane = tab.panes.get(&pane_id)?;
-        pane.shell_cwd
+        let shell_cwd = pane
+            .shell_cwd
+            .as_deref()
+            .map(|s| s.to_string())
+            .or_else(|| pane.terminal.shell_cwd());
+        shell_cwd
             .as_deref()
             .and_then(cwd_url_to_path)
             .map(|p| p.to_string_lossy().to_string())
@@ -491,9 +500,12 @@ impl App {
     pub(super) fn active_pane_cwd_path(&self) -> Option<std::path::PathBuf> {
         let tab = self.active_tab()?;
         let pane = tab.panes.get(&tab.focused_pane)?;
-        pane.shell_cwd
+        let shell_cwd = pane
+            .shell_cwd
             .as_deref()
-            .and_then(cwd_url_to_path)
+            .map(|s| s.to_string())
+            .or_else(|| pane.terminal.shell_cwd());
+        shell_cwd.as_deref().and_then(cwd_url_to_path)
     }
 
     pub(super) fn set_tab_cwd(&mut self, tab_id: TabId, cwd: &str) {
@@ -535,12 +547,19 @@ impl App {
         let mut tabs = Vec::new();
         for tab in &self.tabs {
             let pane_ids: Vec<u64> = tab.panes.keys().copied().collect();
+            let mut pane_cwds = serde_json::Map::new();
+            for pane_id in tab.panes.keys() {
+                let cwd = self.cwd_for_event(Some(tab.id), Some(*pane_id));
+                let value = cwd.map(serde_json::Value::String).unwrap_or(serde_json::Value::Null);
+                pane_cwds.insert(pane_id.to_string(), value);
+            }
             let cwd = self.cwd_for_event(Some(tab.id), Some(tab.focused_pane));
             tabs.push(serde_json::json!({
                 "id": tab.id,
                 "title": tab.title,
                 "focused_pane": tab.focused_pane,
                 "panes": pane_ids,
+                "pane_cwds": pane_cwds,
                 "cwd": cwd,
             }));
         }
@@ -778,13 +797,16 @@ fn cwd_url_to_path(cwd_url: &str) -> Option<std::path::PathBuf> {
         s = stripped;
     }
     if !s.starts_with('/') {
-        if let Some((_, rest)) = s.split_once('/') {
-            s = rest;
+        if let Some(idx) = s.find('/') {
+            s = &s[idx..];
         }
     }
     s = s.split(['?', '#']).next().unwrap_or(s);
     while s.starts_with("//") {
         s = &s[1..];
+    }
+    if !s.starts_with('/') {
+        return None;
     }
     if s.is_empty() {
         return None;
@@ -1070,6 +1092,14 @@ mod tests {
                 std::env::set_var("HOME", old_home);
             }
         }
+    }
+
+    #[test]
+    fn cwd_url_to_path_strips_host() {
+        let path = cwd_url_to_path("file://example.com/tmp/testing").unwrap();
+        assert_eq!(path, PathBuf::from("/tmp/testing"));
+        let path = cwd_url_to_path("file:///tmp/testing").unwrap();
+        assert_eq!(path, PathBuf::from("/tmp/testing"));
     }
 
     #[test]

@@ -4,6 +4,8 @@ set -euo pipefail
 # Configuration
 # Number of days after which to clean up old state files (0 to disable cleanup)
 STATE_CLEANUP_DAYS=${WORKTREE_STATE_CLEANUP_DAYS:-1}
+# Require an extra confirmation after selecting a worktree to close (0 to disable)
+CLOSE_CONFIRM_AFTER_PICK=${WORKTREE_CLOSE_CONFIRM_AFTER_PICK:-1}
 
 event_json="${YATMUX_PLUGIN_EVENT:-}"
 if [ -z "$event_json" ]; then
@@ -124,6 +126,10 @@ emit_close_tab() {
   printf '{"command":"close_tab","tab_id":%s}\n' "$1"
 }
 
+emit_close_pane() {
+  printf '{"command":"close_pane","tab_id":%s,"pane_id":%s}\n' "$1" "$2"
+}
+
 slugify() {
   echo "$1" | \
     sed 's#[^A-Za-z0-9._-]#-#g' | \
@@ -133,11 +139,17 @@ slugify() {
 }
 
 repo_root_from() {
+  local root
+  root="$({ git -C "$1" worktree list --porcelain 2>/dev/null || true; } | awk '/^worktree /{print $2; exit}')"
+  if [ -n "$root" ]; then
+    echo "$root"
+    return 0
+  fi
   git -C "$1" rev-parse --show-toplevel 2>/dev/null || true
 }
 
 worktree_list_json() {
-  git -C "$1" worktree list --porcelain 2>/dev/null | python3 -c '
+  { git -C "$1" worktree list --porcelain 2>/dev/null || true; } | python3 -c '
 import sys,json
 text=sys.stdin.read().splitlines()
 items=[]
@@ -191,6 +203,31 @@ for tab in _tabs:
     if tab.get("cwd")==target:
         print(tab.get("id"))
         break
+' "$1"
+}
+
+panes_for_path() {
+  python3 -c '
+import json,sys
+tabs=json.loads(sys.stdin.read())
+target=sys.argv[1]
+out=[]
+for tab in tabs:
+    tab_id=tab.get("id")
+    pane_cwds=tab.get("pane_cwds") or {}
+    if isinstance(pane_cwds, dict):
+        items=pane_cwds.items()
+    else:
+        items=[]
+    for pane_id, cwd in items:
+        if cwd == target:
+            try:
+                pane_id_int=int(pane_id)
+            except Exception:
+                continue
+            out.append((tab_id, pane_id_int))
+for tab_id, pane_id in out:
+    print(f"{tab_id} {pane_id}")
 ' "$1"
 }
 
@@ -408,11 +445,33 @@ if [ "$event" = "prompt_response" ]; then
       fi
       target_path="$(json_get path "$item_json" 2>/dev/null || true)"
       if [ -n "$target_path" ]; then
-        git -C "$repo" worktree remove -f "$target_path" >/dev/null 2>&1 || true
-        new_id="wt-close-path-$(date +%s%N)"
-        save_request "$new_id" "{\"action\":\"close_path\",\"repo\":\"$repo\",\"path\":\"$target_path\"}"
-        emit_request_state "$new_id"
+        if [ "${CLOSE_CONFIRM_AFTER_PICK}" -gt 0 ] 2>/dev/null; then
+          branch="$(json_get branch "$item_json" 2>/dev/null || true)"
+          new_id="wt-close-final-$(date +%s%N)"
+          save_request "$new_id" "{\"action\":\"close_confirm_final\",\"repo\":\"$repo\",\"path\":\"$target_path\",\"branch\":\"$branch\"}"
+          if [ -n "$branch" ]; then
+            emit_confirm "$new_id" "Confirm removal" "Remove worktree '$branch'? This cannot be undone." "Remove" "Cancel"
+          else
+            emit_confirm "$new_id" "Confirm removal" "Remove worktree at '$target_path'? This cannot be undone." "Remove" "Cancel"
+          fi
+        else
+          git -C "$repo" worktree remove -f "$target_path" >/dev/null 2>&1 || true
+          new_id="wt-close-path-$(date +%s%N)"
+          save_request "$new_id" "{\"action\":\"close_path\",\"repo\":\"$repo\",\"path\":\"$target_path\"}"
+          emit_request_state "$new_id"
+        fi
       fi
+      ;;
+    close_confirm_final)
+      target_path="$(json_get path "$req_json" 2>/dev/null || true)"
+      if [ -z "$target_path" ]; then
+        rm_request "$req_id"
+        exit 0
+      fi
+      git -C "$repo" worktree remove -f "$target_path" >/dev/null 2>&1 || true
+      new_id="wt-close-path-$(date +%s%N)"
+      save_request "$new_id" "{\"action\":\"close_path\",\"repo\":\"$repo\",\"path\":\"$target_path\"}"
+      emit_request_state "$new_id"
       ;;
   esac
   rm_request "$req_id"
@@ -488,9 +547,18 @@ $close_orphans"
 
   if [ "$action" = "close_path" ]; then
     if [ -n "$target_path" ]; then
-      tab_id="$(tab_id_for_path "$target_path" <<<"$tabs_json")"
-      if [ -n "$tab_id" ]; then
-        emit_close_tab "$tab_id"
+      matches="$(panes_for_path "$target_path" <<<"$tabs_json")"
+      if [ -n "$matches" ]; then
+        while read -r tab_id pane_id; do
+          [ -n "$tab_id" ] || continue
+          [ -n "$pane_id" ] || continue
+          emit_close_pane "$tab_id" "$pane_id"
+        done <<<"$matches"
+      else
+        tab_id="$(tab_id_for_path "$target_path" <<<"$tabs_json")"
+        if [ -n "$tab_id" ]; then
+          emit_close_tab "$tab_id"
+        fi
       fi
     fi
   fi

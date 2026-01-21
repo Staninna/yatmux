@@ -256,6 +256,8 @@ impl Config {
         out.push_str("#\n");
         out.push_str("# Prevent splitting panes too small:\n");
         out.push_str("# min_size = 100\n\n");
+        out.push_str("# Inherit focused pane cwd on split:\n");
+        out.push_str("# inherit_cwd_on_split = true\n\n");
 
         out.push_str("[shell_integration]\n");
         out.push_str("# cwd_from_osc7 = true\n");

@@ -345,12 +345,24 @@ impl App {
         let scale = self.config.font.scale;
         let scrollback = self.config.terminal.scrollback_lines;
         let min_size = self.config.pane.min_size();
+        let inherit_cwd = self.config.pane.inherit_cwd_on_split();
         let shadow_default = self
             .config
             .shell_integration
             .shadow_prompt_enabled_by_default;
         let proxy = self.event_proxy.clone();
-        let cwd = self.active_pane_cwd_path();
+        let cwd = if inherit_cwd {
+            self.active_pane_cwd_path()
+        } else {
+            None
+        };
+        let parent_shell_cwd = if inherit_cwd {
+            self.active_tab()
+                .and_then(|t| t.panes.get(&t.focused_pane))
+                .and_then(|p| p.shell_cwd.clone())
+        } else {
+            None
+        };
 
         // Get the current focused pane's rect
         let focused_rect = self.focused_pane_rect();
@@ -369,6 +381,15 @@ impl App {
                 shadow_default,
                 cwd.as_deref(),
             );
+            if inherit_cwd {
+                if let (Some(new_id), Some(cwd_url)) =
+                    (new_pane, parent_shell_cwd.as_deref())
+                {
+                    if let Some(pane) = tab.panes.get_mut(&new_id) {
+                        pane.shell_cwd = Some(cwd_url.to_string());
+                    }
+                }
+            }
             (new_pane, tab.id)
         };
 

@@ -291,6 +291,27 @@ impl App {
         true
     }
 
+    pub fn close_pane_by_id(&mut self, tab_id: TabId, pane_id: PaneId) -> bool {
+        let Some(index) = self.tabs.iter().position(|t| t.id == tab_id) else {
+            return false;
+        };
+        let should_close_tab = {
+            let t = &mut self.tabs[index];
+            if t.panes.contains_key(&pane_id) {
+                t.close_pane(pane_id)
+            } else {
+                false
+            }
+        };
+        if should_close_tab {
+            self.close_tab(index);
+        } else {
+            self.layout_dirty = true;
+            self.request_redraw();
+        }
+        true
+    }
+
     /// Reorders a tab from one position to another
     pub fn reorder_tab(&mut self, from: usize, to: usize) {
         if from == to || from >= self.tabs.len() || to > self.tabs.len() {

@@ -122,6 +122,7 @@ impl Tab {
         shadow_prompt_enabled: bool,
         cwd: Option<&Path>,
     ) {
+        let initial_cwd = cwd.map(|path| path.to_string_lossy().to_string());
         let (pty, reader) = match yatmux::pty::spawn_shell_with_cwd(cwd) {
             Ok(result) => result,
             Err(e) => {
@@ -143,7 +144,7 @@ impl Tab {
                 view: TerminalView::new(),
                 scale: scale.clamp(0.25, 64.0),
                 shell_title: None,
-                shell_cwd: None,
+                shell_cwd: initial_cwd,
                 shell_integration: Default::default(),
                 shadow_prompt: Default::default(),
                 shadow_prompt_enabled,

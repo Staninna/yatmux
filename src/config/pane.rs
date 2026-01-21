@@ -22,6 +22,9 @@ pub struct PaneConfig {
     /// Minimum pane size in pixels (prevents splitting below this size).
     #[serde(default)]
     pub min_size: Option<usize>,
+    /// Whether new splits inherit the focused pane's cwd.
+    #[serde(default)]
+    pub inherit_cwd_on_split: Option<bool>,
 }
 
 const DEFAULT_PANE_PADDING: usize = 8;
@@ -36,6 +39,7 @@ impl Default for PaneConfig {
             padding_top: None,
             padding_bottom: None,
             min_size: None,
+            inherit_cwd_on_split: None,
         }
     }
 }
@@ -72,5 +76,10 @@ impl PaneConfig {
     /// Returns the minimum pane size in pixels.
     pub fn min_size(&self) -> usize {
         self.min_size.unwrap_or(DEFAULT_MIN_PANE_SIZE)
+    }
+
+    /// Returns whether new splits should inherit the focused pane's cwd.
+    pub fn inherit_cwd_on_split(&self) -> bool {
+        self.inherit_cwd_on_split.unwrap_or(true)
     }
 }

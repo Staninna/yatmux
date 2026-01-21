@@ -195,6 +195,7 @@ fn test_plugin_commands_enum_complete() {
     assert!(plugins_src.contains("NewTab"));
     assert!(plugins_src.contains("FocusTab"));
     assert!(plugins_src.contains("CloseTab"));
+    assert!(plugins_src.contains("ClosePane"));
     assert!(plugins_src.contains("SetTabTitle"));
     assert!(plugins_src.contains("SetTabCwd"));
     assert!(plugins_src.contains("SetPaneCwd"));

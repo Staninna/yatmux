@@ -160,6 +160,7 @@ All padding values are pixels.
 - `padding_top` (usize | omitted): omitted
 - `padding_bottom` (usize | omitted): omitted
 - `min_size` (usize | omitted): omitted
+- `inherit_cwd_on_split` (bool): `true`
 
 Effective defaults:
 
