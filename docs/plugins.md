@@ -71,20 +71,222 @@ Plugins receive events as JSON:
 echo '{"command":"subscribe","events":["plugin_command","tab_changed"]}'
 ```
 
-`state_response` payload now includes per-pane cwd mappings:
+See the **Available Data** section below for complete details on event payloads and response structures.
+
+## Available Data
+
+Plugins receive rich contextual data through event payloads and environment variables. This section documents all available data structures.
+
+### Event Payload Structure
+
+All events follow this JSON structure:
 ```json
 {
-  "tabs": [
-    {
-      "id": 1,
-      "panes": [1, 2],
-      "pane_cwds": {
-        "1": "/path/one",
-        "2": "/path/two"
-      }
-    }
-  ]
+  "event": "event_name",
+  "action": "action_name",  // optional
+  "source": "user|plugin",  // optional
+  "tab_id": 123,            // optional - current tab ID
+  "pane_id": 456,           // optional - focused pane ID
+  "data": {                 // event-specific data
+    // varies by event type
+  }
 }
+```
+
+### Context Fields
+
+Many events include contextual information:
+- **`tab_id`** (number) - ID of the active tab when event occurred
+- **`pane_id`** (number) - ID of the focused pane within the active tab
+- **`source`** (string) - Either `"user"` (triggered by user action) or `"plugin"` (triggered by another plugin)
+
+### Event-Specific Data
+
+#### `plugin_command` Event
+Triggered when a plugin keybinding is pressed or another plugin sends a command.
+
+**When triggered by keybinding:**
+```json
+{
+  "event": "plugin_command",
+  "source": "user",
+  "tab_id": 1,
+  "pane_id": 2,
+  "data": {
+    "plugin": "plugin-name",        // target plugin name
+    "command": "my_command",        // command name
+    "args": ["arg1", "arg2"],       // optional arguments (may be null)
+    "cwd": "/home/user/project"     // current working directory
+  }
+}
+```
+
+**When triggered programmatically:**
+```json
+{
+  "event": "plugin_command",
+  "source": "plugin",
+  "data": {
+    "name": "command_name",         // command name
+    "args": {...},                  // optional arguments (may be null)
+    "cwd": "/home/user/project"     // current working directory
+  }
+}
+```
+
+**Example: Extract command name and arguments**
+```bash
+event_json="${YATMUX_PLUGIN_EVENT:-$(cat)}"
+name=$(echo "$event_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["data"]["name"])')
+args=$(echo "$event_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(d["data"].get("args", [])))')
+```
+
+#### `prompt_response` Event
+Response to `prompt`, `confirm`, or `pick` commands.
+
+```json
+{
+  "event": "prompt_response",
+  "data": {
+    "id": "request-123",      // matches your request ID
+    "ok": true,               // true if confirmed/submitted, false if canceled
+    "value": "user input",    // text entered (prompts) or selected item (pick) or empty (confirms)
+    "index": 0,               // (pick only) index of selected item
+    "kind": "prompt",         // type: "prompt", "confirm", or "pick"
+    "reason": "escape"        // (optional) cancellation reason if ok=false
+  }
+}
+```
+
+**Note:** The core fields are `id`, `ok`, and `value`. Additional fields like `index`, `kind`, and `reason` are also available.
+
+**Example: Handle prompt response**
+```bash
+id=$(echo "$event_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')
+ok=$(echo "$event_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["ok"])')
+value=$(echo "$event_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"].get("value", ""))')
+
+if [ "$ok" = "True" ]; then
+  echo "User entered: $value"
+fi
+```
+
+#### `state_response` Event
+Response to `request_state` command. Provides complete application state.
+
+```json
+{
+  "event": "state_response",
+  "data": {
+    "id": "state-req-123",    // matches your request ID
+    "active_tab": 1,          // currently focused tab ID
+    "tabs": [
+      {
+        "id": 1,
+        "title": "main",
+        "focused_pane": 2,
+        "panes": [1, 2, 3],
+        "cwd": "/home/user",  // focused pane's cwd
+        "pane_cwds": {        // per-pane working directories
+          "1": "/home/user/project1",
+          "2": "/home/user/project2",
+          "3": "/home/user/project3"
+        }
+      }
+    ]
+  }
+}
+```
+
+**Tab Object Fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | number | Unique tab identifier |
+| `title` | string | Tab display title |
+| `focused_pane` | number | ID of currently focused pane in this tab |
+| `panes` | number[] | List of all pane IDs in this tab |
+| `cwd` | string | Working directory of focused pane |
+| `pane_cwds` | object | Map of pane ID to working directory for each pane |
+
+**Example: Find tabs in a specific directory**
+```bash
+# Request state
+request_id="find-tabs-$(date +%s%N)"
+echo "{\"command\":\"request_state\",\"id\":\"$request_id\"}"
+
+# Later, in state_response handler:
+event_json="${YATMUX_PLUGIN_EVENT:-$(cat)}"
+target_dir="/home/user/project"
+
+# Extract tabs matching directory
+matching_tabs=$(echo "$event_json" | python3 - "$target_dir" <<'PY'
+import json, sys
+target = sys.argv[1]
+data = json.load(sys.stdin)
+tabs = data["data"]["tabs"]
+matches = [t for t in tabs if t.get("cwd", "").startswith(target)]
+print(json.dumps(matches))
+PY
+)
+```
+
+#### `clipboard_response` Event
+Response to `clipboard_read` command.
+
+```json
+{
+  "event": "clipboard_response",
+  "data": {
+    "id": "clipboard-123",    // matches your request ID
+    "text": "clipboard text"  // clipboard contents (may be empty)
+  }
+}
+```
+
+**Example: Process clipboard content**
+```bash
+clipboard_text=$(echo "$event_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"].get("text", ""))')
+if [ -n "$clipboard_text" ]; then
+  # Process clipboard content
+  echo "{\"command\":\"toast\",\"message\":\"Clipboard: $clipboard_text\"}"
+fi
+```
+
+### Working with State
+
+**Common Patterns:**
+
+**1. Check if a tab exists:**
+```bash
+tab_exists() {
+  local tab_id="$1"
+  local state_json="$2"
+  echo "$state_json" | python3 - "$tab_id" <<'PY'
+import json, sys
+tab_id = int(sys.argv[1])
+data = json.load(sys.stdin)
+tabs = data["data"]["tabs"]
+exists = any(t["id"] == tab_id for t in tabs)
+print("true" if exists else "false")
+PY
+}
+```
+
+**2. Get tab count:**
+```bash
+tab_count=$(echo "$state_json" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]["tabs"]))')
+```
+
+**3. Iterate over all panes:**
+```bash
+echo "$state_json" | python3 <<'PY'
+import json, sys
+data = json.load(sys.stdin)
+for tab in data["data"]["tabs"]:
+    for pane_id in tab["panes"]:
+        cwd = tab["pane_cwds"].get(str(pane_id), "unknown")
+        print(f"Tab {tab['id']}, Pane {pane_id}: {cwd}")
+PY
 ```
 
 ## Environment Variables
