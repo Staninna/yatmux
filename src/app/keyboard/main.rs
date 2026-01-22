@@ -1,9 +1,9 @@
-use super::*;
-use super::plugins::ActionSource;
-use yatmux::config::KeybindAction;
+use super::bindings::ResolvedKeybind;
+use super::super::plugins::ActionSource;
+use super::super::*;
 
 impl App {
-    pub(super) fn handle_keyboard(&mut self, event: &winit::event::KeyEvent) {
+    pub(crate) fn handle_keyboard(&mut self, event: &winit::event::KeyEvent) {
         if event.state != ElementState::Pressed {
             return;
         }
@@ -29,97 +29,22 @@ impl App {
 
         let modifiers = self.input.modifiers;
         let ctrl = modifiers.control_key();
-        let shift = modifiers.shift_key();
         let alt = modifiers.alt_key();
 
         let key_str = key_event_to_string(event);
-        let binding = key_str
-            .as_deref()
-            .and_then(|s| self.config.keybinds.get_binding(s, ctrl, shift, alt));
-        let action = binding.as_ref().and_then(|b| b.builtin_action());
-        let plugin_binding = binding.as_ref().and_then(|b| match b {
-            KeybindAction::Plugin(plugin) => Some(plugin),
-            _ => None,
-        });
-        let non_search_action = action.filter(|a| !a.is_search_mode_only());
 
-        // If the help overlay is open, capture navigation keys for scrolling.
-        if self.show_help {
-            if let Some(key) = key_str.as_deref() {
-                match key {
-                    "escape" => {
-                        if self.help_filter.is_active() {
-                            self.help_filter.deactivate();
-                            self.help_scroll = 0;
-                            self.request_redraw();
-                            return;
-                        }
-                    }
-                    "backspace" => {
-                        if self.help_filter.is_active() {
-                            self.help_filter.pop_char();
-                            self.help_scroll = 0;
-                            self.request_redraw();
-                            return;
-                        }
-                    }
-                    "up" => {
-                        self.help_scroll = self.help_scroll.saturating_sub(1);
-                        self.request_redraw();
-                        return;
-                    }
-                    "down" => {
-                        self.help_scroll = (self.help_scroll + 1).min(self.help_max_scroll);
-                        self.request_redraw();
-                        return;
-                    }
-                    "pageup" => {
-                        self.help_scroll = self.help_scroll.saturating_sub(10);
-                        self.request_redraw();
-                        return;
-                    }
-                    "pagedown" => {
-                        self.help_scroll = (self.help_scroll + 10).min(self.help_max_scroll);
-                        self.request_redraw();
-                        return;
-                    }
-                    "home" => {
-                        self.help_scroll = 0;
-                        self.request_redraw();
-                        return;
-                    }
-                    "end" => {
-                        self.help_scroll = self.help_max_scroll;
-                        self.request_redraw();
-                        return;
-                    }
-                    "d" if !ctrl && !alt && !self.help_filter.is_active() => {
-                        self.shell_warning_dismissed = true;
-                        self.request_redraw();
-                        return;
-                    }
-                    _ => {}
-                }
-            }
-
-            // Any other character input activates filter and adds to query
-            if let Some(text) = &event.text {
-                if !text.is_empty() && !ctrl && !alt {
-                    for ch in text.chars() {
-                        if !ch.is_control() {
-                            self.help_filter.activate();
-                            self.help_filter.push_char(ch);
-                        }
-                    }
-                    self.help_scroll = 0;
-                    self.request_redraw();
-                    return;
-                }
-            }
+        if self.handle_help_overlay_input(key_str.as_deref(), event, modifiers) {
+            return;
         }
 
+        let ResolvedKeybind {
+            action,
+            plugin_binding,
+            non_search_action,
+        } = self.resolve_keybinding(key_str.as_deref(), modifiers);
+
         if let Some(plugin_binding) = plugin_binding {
-            self.dispatch_plugin_keybind_event(plugin_binding, ActionSource::User);
+            self.dispatch_plugin_keybind_event(&plugin_binding, ActionSource::User);
             return;
         }
 
@@ -156,6 +81,17 @@ impl App {
                     | Action::JumpToPrevPrompt
                     | Action::JumpToNextPrompt
                     | Action::ToggleShadowPrompt
+                    | Action::CycleProfile
+                    | Action::CycleProfileReverse
+                    | Action::SwitchToProfile1
+                    | Action::SwitchToProfile2
+                    | Action::SwitchToProfile3
+                    | Action::SwitchToProfile4
+                    | Action::SwitchToProfile5
+                    | Action::SwitchToProfile6
+                    | Action::SwitchToProfile7
+                    | Action::SwitchToProfile8
+                    | Action::SwitchToProfile9
                     | Action::ReloadConfig
             ) {
                 self.execute_action(action);
@@ -245,70 +181,6 @@ impl App {
 
         if needs_redraw {
             self.request_redraw();
-        }
-    }
-
-    fn handle_shadow_prompt_input(
-        pane: &mut Pane,
-        key: &Key,
-        modifiers: winit::keyboard::ModifiersState,
-    ) -> bool {
-        let ctrl = modifiers.control_key();
-        let alt = modifiers.alt_key();
-
-        match key {
-            Key::Named(NamedKey::Backspace) => {
-                pane.shadow_prompt.backspace();
-                true
-            }
-            Key::Named(NamedKey::Delete) => {
-                pane.shadow_prompt.delete();
-                true
-            }
-            Key::Named(NamedKey::ArrowLeft) => {
-                pane.shadow_prompt.move_left();
-                true
-            }
-            Key::Named(NamedKey::ArrowRight) => {
-                pane.shadow_prompt.move_right();
-                true
-            }
-            Key::Named(NamedKey::Home) => {
-                pane.shadow_prompt.move_home();
-                true
-            }
-            Key::Named(NamedKey::End) => {
-                pane.shadow_prompt.move_end();
-                true
-            }
-            Key::Named(NamedKey::Escape) => {
-                // Clear shadow prompt on Escape
-                pane.shadow_prompt.clear();
-                true
-            }
-            Key::Named(NamedKey::Enter) => {
-                // Add newline to buffer (for multi-line commands)
-                pane.shadow_prompt.insert('\n');
-                true
-            }
-            Key::Named(NamedKey::Space) => {
-                if !ctrl && !alt {
-                    pane.shadow_prompt.insert(' ');
-                    true
-                } else {
-                    false
-                }
-            }
-            Key::Character(s) => {
-                // Regular text input (when not ctrl/alt modified)
-                if !ctrl && !alt {
-                    pane.shadow_prompt.insert_str(s);
-                    true
-                } else {
-                    false
-                }
-            }
-            _ => false,
         }
     }
 }

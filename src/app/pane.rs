@@ -100,11 +100,6 @@ impl ShadowPrompt {
         self.visible = false;
         s
     }
-
-    /// Check if buffer is empty.
-    pub fn is_empty(&self) -> bool {
-        self.buffer.is_empty()
-    }
 }
 
 /// A terminal pane with its view and scale.
@@ -124,6 +119,9 @@ pub struct Pane {
     pub shadow_prompt_enabled: bool,
     /// Cached state: whether a command is currently running (updated on PTY output only).
     pub command_running: bool,
+
+    /// Active profile for this pane.
+    pub profile: String,
 }
 
 impl App {

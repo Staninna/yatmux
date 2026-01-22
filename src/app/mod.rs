@@ -15,7 +15,7 @@ mod plugins;
 mod pty;
 mod prompt;
 mod shell_integration;
-mod tabs_state;
+mod tabs;
 mod url;
 mod winit_handler;
 
