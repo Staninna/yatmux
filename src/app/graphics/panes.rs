@@ -154,24 +154,25 @@ impl App {
 
             // Draw borders around panes.
             // - Inactive panes: subtle divider border
-            // - Active pane: accent border on top
+            // - Active pane: profile border color (or accent if not set)
+            let border_color = if pane_render.is_focused {
+                // Get profile border color or use accent
+                self.config
+                    .profiles
+                    .get_profile(&pane.profile)
+                    .and_then(|p| p.border_color)
+                    .unwrap_or(accent_color)
+            } else {
+                ui_style.divider
+            };
+
             draw_border(
                 &mut buffer,
                 buffer_width as usize,
                 buffer_height as usize,
                 pane_render.rect,
-                ui_style.divider,
+                border_color,
             );
-
-            if pane_render.is_focused {
-                draw_border(
-                    &mut buffer,
-                    buffer_width as usize,
-                    buffer_height as usize,
-                    pane_render.rect,
-                    accent_color,
-                );
-            }
         }
     }
 }
