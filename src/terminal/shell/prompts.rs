@@ -1,27 +1,8 @@
-use std::sync::{Arc, Mutex};
-
-use anyhow::{Result, anyhow};
 use crate::core::color::Color;
-
 use crate::core::grid::RowSnapshot;
 
-use tattoy_wezterm_term::{Alert, AlertHandler};
-
-use super::Terminal;
-use super::adapters::color_attr_to_color;
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct ShellIntegrationStatus {
-    pub osc7_cwd: bool,
-    pub osc133_semantic: bool,
-    pub osc_title: bool,
-}
-
-impl ShellIntegrationStatus {
-    pub fn any(&self) -> bool {
-        self.osc7_cwd || self.osc133_semantic || self.osc_title
-    }
-}
+use super::super::adapters::color_attr_to_color;
+use super::super::Terminal;
 
 /// Information about the current prompt for sticky prompt display.
 #[derive(Debug, Clone)]
@@ -31,98 +12,7 @@ pub struct StickyPromptInfo {
     pub cursor: Option<(usize, usize)>,
 }
 
-#[derive(Debug, Default)]
-pub(super) struct ShellIntegrationState {
-    pub(super) osc7_cwd: bool,
-    pub(super) osc133_semantic: bool,
-    pub(super) osc_title: bool,
-}
-
-#[derive(Clone)]
-pub(super) struct ShellIntegrationAlertHandler {
-    pub(super) state: Arc<Mutex<ShellIntegrationState>>,
-}
-
-impl AlertHandler for ShellIntegrationAlertHandler {
-    fn alert(&mut self, alert: Alert) {
-        let Ok(mut state) = self.state.lock() else {
-            return;
-        };
-
-        match alert {
-            Alert::CurrentWorkingDirectoryChanged => {
-                state.osc7_cwd = true;
-            }
-            Alert::WindowTitleChanged(_)
-            | Alert::TabTitleChanged(_)
-            | Alert::IconTitleChanged(_) => {
-                state.osc_title = true;
-            }
-            _ => {}
-        }
-    }
-}
-
 impl Terminal {
-    pub fn shell_integration_status(&self) -> ShellIntegrationStatus {
-        let Ok(state) = self.shell_integration.lock() else {
-            return ShellIntegrationStatus::default();
-        };
-
-        ShellIntegrationStatus {
-            osc7_cwd: state.osc7_cwd,
-            osc133_semantic: state.osc133_semantic,
-            osc_title: state.osc_title,
-        }
-    }
-
-    /// Returns the current shell-reported title, if any.
-    pub fn shell_title(&self) -> Option<String> {
-        // Avoid false positives from the terminal model's default title.
-        if !self.shell_integration_status().osc_title {
-            return None;
-        }
-
-        let term = self.term.lock().ok()?;
-        let title = term.get_title().trim();
-        if title.is_empty() {
-            None
-        } else {
-            Some(title.to_string())
-        }
-    }
-
-    /// Returns the current shell-reported working directory (OSC 7), if any.
-    pub fn shell_cwd(&self) -> Option<String> {
-        if !self.shell_integration_status().osc7_cwd {
-            return None;
-        }
-
-        let term = self.term.lock().ok()?;
-        term.get_current_dir().map(|u| u.to_string())
-    }
-
-    /// Computes semantic zones from OSC 133 markers (prompt/input/output).
-    pub fn semantic_zones(&self) -> Result<Vec<tattoy_wezterm_term::SemanticZone>> {
-        let mut term = self
-            .term
-            .lock()
-            .map_err(|_| anyhow!("terminal mutex poisoned"))?;
-        let zones = term.get_semantic_zones()?;
-
-        let has_markers = zones
-            .iter()
-            .any(|z| z.semantic_type != tattoy_wezterm_term::SemanticType::Output);
-
-        if has_markers {
-            if let Ok(mut state) = self.shell_integration.lock() {
-                state.osc133_semantic = true;
-            }
-        }
-
-        Ok(zones)
-    }
-
     /// Returns the content of the current (last) prompt and input lines, if available.
     /// This is used for sticky prompt display when scrolled up.
     /// Returns the rows that make up the prompt+input (may be multiple lines) and cursor position.
