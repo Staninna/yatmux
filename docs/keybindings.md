@@ -80,8 +80,68 @@ Actions are defined in `src/config/action.rs` and are serialized as `snake_case`
 - `scroll_to_top`, `scroll_to_bottom`, `clear_scrollback`, `reset`
 - `search_find`, `search_close`, `search_next`, `search_prev`, `search_toggle_case`, `search_toggle_regex`, `search_confirm`
 - `copy_last_output`, `jump_to_prev_prompt`, `jump_to_next_prompt`, `toggle_shadow_prompt`
+- `cycle_profile`, `cycle_profile_reverse`, `switch_to_profile1` .. `switch_to_profile9`
 - `reload_config`
-- `toggle_test_pattern`
+
+## Profile-Scoped Keybindings
+
+Profiles allow you to define different keybinding sets for different workflows. Each profile can override global keybindings defined in `[keybinds]`.
+
+**Configuration:**
+
+```toml
+# Global keybinds (used by all profiles unless overridden)
+[keybinds]
+"ctrl+shift+t" = "new_tab"
+"ctrl+shift+q" = "close_tab"
+
+# Vim-style profile
+[profiles.vim]
+border_color = 0x50FA7B  # Optional: green border
+"ctrl+h" = "focus_left"
+"ctrl+j" = "focus_down"
+"ctrl+k" = "focus_up"
+"ctrl+l" = "focus_right"
+
+# Default profile
+[profiles.default]
+border_color = 0xBD93F9  # Optional: purple border
+"ctrl+shift+c" = "copy"
+"ctrl+shift+v" = "paste"
+```
+
+**Keybind Resolution:**
+
+When a key is pressed, yatmux resolves the action in this order:
+
+1. **Profile keybinds**: Check the active profile's `[profiles.<name>]` section
+2. **Global keybinds**: If not found, check the global `[keybinds]` section
+3. **No action**: If still not found, the key passes through to the terminal
+
+**Important Notes:**
+
+- **App-level actions** (tab management, help, config reload, profile switching) always use global keybinds, even if overridden in a profile
+- **Disabling in profile**: Setting a key to `"none"` in a profile prevents fallback to global keybinds
+- **Profile switching** is pane-scoped (each pane has its own active profile)
+- **New tabs** always start with the `"default"` profile
+- **Split panes** inherit their parent's profile
+
+**Example: Disabling a Global Keybind in a Profile**
+
+```toml
+[keybinds]
+"ctrl+shift+c" = "copy"
+
+[profiles.vim]
+"ctrl+shift+c" = "none"  # Disable copy in vim profile
+```
+
+**Profile Switching:**
+
+- Ctrl+Shift+P: Cycle to next profile
+- Ctrl+Alt+1-9: Switch to profile by index (sorted alphabetically, "default" first)
+- Profile name is shown in a toast when switching
+- Focused pane border changes color if `border_color` is configured
 
 ## Default bindings
 
@@ -176,6 +236,22 @@ These are active while search UI is open:
 
 ```toml
 "ctrl+shift+r" = "reload_config"
+```
+
+### Profile Management
+
+```toml
+"ctrl+shift+p" = "cycle_profile"
+
+"ctrl+alt+1" = "switch_to_profile1"
+"ctrl+alt+2" = "switch_to_profile2"
+"ctrl+alt+3" = "switch_to_profile3"
+"ctrl+alt+4" = "switch_to_profile4"
+"ctrl+alt+5" = "switch_to_profile5"
+"ctrl+alt+6" = "switch_to_profile6"
+"ctrl+alt+7" = "switch_to_profile7"
+"ctrl+alt+8" = "switch_to_profile8"
+"ctrl+alt+9" = "switch_to_profile9"
 ```
 
 ### Shell integration

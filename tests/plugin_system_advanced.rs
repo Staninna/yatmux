@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct TempDir {
@@ -9,12 +10,18 @@ struct TempDir {
 
 impl TempDir {
     fn new() -> Self {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
         let mut path = std::env::temp_dir();
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        path.push(format!("yatmux-test-{nanos}-{}", std::process::id()));
+        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+        path.push(format!(
+            "yatmux-test-{nanos}-{}-{counter}",
+            std::process::id()
+        ));
         fs::create_dir_all(&path).unwrap();
         Self { path }
     }

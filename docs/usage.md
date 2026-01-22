@@ -13,8 +13,14 @@ This page covers day-to-day usage that isn’t purely “edit the config”.
 
 ## Rendering
 
-yatmux uses a built-in 8x8 bitmap font (`font8x8`) and scales it up.
-There is no font family selection at the moment; `[font].scale` controls the base size.
+yatmux renders terminal text using a bundled TrueType font (JetBrains Mono) via `rusttype`.
+For characters that can’t be rasterized (or are missing), it falls back to an 8x8 bitmap glyph (`font8x8`).
+
+Font sizing:
+
+- `[font].size` sets the base size.
+- `[font].scale` multiplies the base size (and is also used as the default pane scale).
+- Pane zoom adjusts the focused pane’s scale only.
 
 ## Tabs
 
@@ -38,7 +44,67 @@ Tab bar notes:
 
 Split constraints:
 
-- Splits are rejected if they’d create a pane smaller than `[pane].min_size` (default 100px).
+- Splits are rejected if they'd create a pane smaller than `[pane].min_size` (default 100px).
+
+## Profiles
+
+Profiles allow you to switch between different keybinding sets on a per-pane basis. This is useful for adapting keybindings to different workflows (e.g., vim-style navigation vs standard shortcuts).
+
+**Switching Profiles:**
+
+- Cycle to next profile: `ctrl+shift+p`
+- Switch to profile by index: `ctrl+alt+1` … `ctrl+alt+9`
+
+**Visual Feedback:**
+
+- A toast message shows the active profile name when switching
+- Focused pane border changes color if the profile defines `border_color` in config
+- Inactive panes always use the standard divider color
+
+**Profile Scope:**
+
+- Each pane has its own active profile
+- Split panes inherit their parent's profile
+- New tabs always start with the `"default"` profile
+- Profile switches are pane-scoped and persist until manually changed
+
+**Keybind Resolution:**
+
+When you press a key, yatmux checks:
+1. The active profile's keybindings first
+2. Global `[keybinds]` section if not found in profile
+3. App-level actions (tabs, help, profile switching) always use global keybinds
+
+**Example Workflow:**
+
+```toml
+# config.toml
+[profiles.vim]
+border_color = 0x50FA7B  # Green border
+"ctrl+h" = "focus_left"
+"ctrl+j" = "focus_down"
+"ctrl+k" = "focus_up"
+"ctrl+l" = "focus_right"
+
+[profiles.default]
+border_color = 0xBD93F9  # Purple border
+"alt+left" = "focus_left"
+"alt+right" = "focus_right"
+"alt+up" = "focus_up"
+"alt+down" = "focus_down"
+```
+
+1. Open yatmux (starts with `"default"` profile)
+2. Press `ctrl+shift+p` to cycle to `"vim"` profile
+3. Border turns green, vim-style navigation works (ctrl+hjkl)
+4. Press `ctrl+alt+1` to return to `"default"` profile
+5. Border turns purple, standard arrow navigation works (alt+arrows)
+
+**Profile Inheritance:**
+
+- When you split a pane (`ctrl+shift+\`), the new pane inherits the parent's profile
+- The parent pane keeps its current profile (unchanged)
+- Each pane can then independently switch profiles
 
 ## Zoom (per pane)
 
@@ -48,7 +114,7 @@ Zoom changes the focused pane’s font scale only.
 
 Notes:
 
-- Pane zoom is clamped to `1..=8`.
+- Pane zoom is clamped to `[experimental.font_scale_clamp]` (default `1..=8`).
 - The tab bar uses the global `[font].scale`, not the pane’s zoom.
 
 ## Mouse
@@ -116,6 +182,8 @@ Default plugin directory:
 Add extra plugin paths via `[plugins].paths` in `config.toml`.
 Plugins run with `bash` from your PATH.
 
+Note: relative paths in `[plugins].paths` are resolved relative to the directory containing `config.toml` (usually `~/.config/yatmux/`).
+
 ### Debug plugin (log hooks)
 
 Example plugin:
@@ -126,7 +194,7 @@ To enable:
 
 ```toml
 [plugins]
-paths = ["./examples/plugins/debug"]
+paths = ["/path/to/yatmux/examples/plugins/debug"]
 ```
 
 It logs every event to `~/.cache/yatmux/plugin-debug.log` (or `$XDG_CACHE_HOME/yatmux/plugin-debug.log`).
@@ -141,7 +209,7 @@ To enable:
 
 ```toml
 [plugins]
-paths = ["./examples/plugins/worktree"]
+paths = ["/path/to/yatmux/examples/plugins/worktree"]
 ```
 
 Suggested keybinds:
@@ -195,6 +263,7 @@ Common event names:
 - `plugin_command` (includes command data from keybinds or plugins)
 - `tab_created`, `tab_closed`, `tab_changed`
 - `pane_split`, `pane_closed`, `pane_focus_changed`
+- `profile_changed` (pane profile switched)
 - `prompt_response`
 - `state_response`
 - `clipboard_response`
@@ -202,8 +271,10 @@ Common event names:
 Notes:
 
 - `data.cwd` is populated when shell integration provides OSC 7 cwd data.
+- `data.profile` is included in pane-related events (`pane_split`, `pane_closed`, `pane_focus_changed`, `profile_changed`).
 - `plugin_command` events from keybinds include `data.plugin` and `data.command`.
 - `prompt_response` events include `data.id`, `data.ok`, and optional `data.value`/`data.index`.
+- `state_response` includes `profile` and `pane_profiles` for each tab.
 
 ### Commands output
 
@@ -227,6 +298,7 @@ Supported commands:
 - `new_tab`: create a new tab at `cwd` (optional `title`)
 - `set_tab_cwd`: change cwd for all panes in a tab (`cwd`, optional `tab_id`)
 - `set_pane_cwd`: change cwd for one pane (`cwd`, optional `tab_id`/`pane_id`)
+- `set_pane_profile`: change pane's active profile (`profile`, optional `tab_id`/`pane_id`)
 - `prompt`: open a text prompt (`id`, `title`, optional `message`, optional `default`)
 - `confirm`: open a confirm dialog (`id`, `title`, optional `message`, optional labels)
 - `pick`: open a quick-pick list (`id`, `title`, optional `message`, `items`, optional `selected`)

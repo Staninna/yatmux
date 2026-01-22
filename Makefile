@@ -52,7 +52,6 @@ watch:
 # Maintenance targets
 clean:
 	cargo clean
-	rm -f TODO.md
 
 test:
 	cargo test

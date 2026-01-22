@@ -115,7 +115,12 @@ Notes:
 
 ### `[font]`
 
-- `scale` (f32): `1.0` - Font scale multiplier (default 1.0-8.0). Accepts decimals like 1.5, 2.25
+- `family` (string): `"JetBrains Mono"`
+  - Currently, yatmux always uses the bundled JetBrains Mono font. System font discovery/selection is not implemented yet, so other values fall back to the bundled font.
+- `size` (f32): `14.0` - Base font size (before scaling).
+- `scale` (f32): `1.0` - Font scale multiplier (default `1.0..=8.0`). Accepts decimals like `1.5`, `2.25`.
+- `weight` (enum): `regular` (currently unused; parsed for future use)
+- `slant` (enum): `normal` (currently unused; parsed for future use)
 
 Notes:
 
@@ -148,7 +153,7 @@ max = 4.0    # Restrict maximum zoom
 ```
 
 **Font Reload Behavior:**
-Changing `font.scale` takes effect via config reload (Ctrl+Shift+R) or keybindings. Changing `font.family` requires restarting yatmux, as fonts are loaded once and cached for the application lifetime.
+Changing `font.scale` / `font.size` takes effect via config reload (Ctrl+Shift+R) and pane zoom keybindings. `font.family`/`weight`/`slant` are parsed and saved but currently don’t change rendering (system font selection is not implemented yet).
 
 ### `[pane]`
 
@@ -331,6 +336,86 @@ gap_px = 6                      # Slightly wider gaps between tabs
 ### `[keybinds]`
 
 See `docs/keybindings.md`.
+
+### `[profiles.<name>]`
+
+Profiles allow you to define different sets of keybindings for different workflows. Each profile can override global keybindings and optionally define a custom border color for visual distinction.
+
+**Key Features:**
+- Each pane has its own active profile (default is `"default"`)
+- Split panes inherit their parent's profile
+- New tabs always start with the `"default"` profile
+- Switch profiles with Ctrl+Shift+P (cycle) or Ctrl+Alt+1-9 (direct)
+- Profiles only scope keybindings (not themes, fonts, or other settings)
+
+**Keybind Resolution Order:**
+1. Profile-specific keybinds (active profile's `[profiles.<name>]` section)
+2. Global keybinds (main `[keybinds]` section)
+3. App-level actions (tab management, help, profile switching) always use global keybinds
+
+**Configuration:**
+
+Each profile is a TOML section `[profiles.<name>]` with optional keybinds and border color:
+
+```toml
+[profiles.default]
+border_color = 0xBD93F9  # Optional: purple border
+"ctrl+shift+c" = "copy"
+"ctrl+shift+v" = "paste"
+
+[profiles.vim]
+border_color = 0x50FA7B  # Optional: green border for vim mode
+"ctrl+h" = "focus_left"
+"ctrl+j" = "focus_down"
+"ctrl+k" = "focus_up"
+"ctrl+l" = "focus_right"
+
+[profiles.emacs]
+border_color = 0x8BE9FD  # Optional: cyan border for emacs mode
+# ... emacs-style keybinds
+```
+
+**Border Colors:**
+- `border_color` (optional): Hex color (e.g., `0xRRGGBB`) for the focused pane border
+- If omitted, uses the global accent color from `[colors].accent`
+- Inactive panes always use the divider color
+
+**Example Usage:**
+```toml
+# Global keybinds (fallback for all profiles)
+[keybinds]
+"ctrl+shift+t" = "new_tab"
+"ctrl+shift+q" = "close_tab"
+
+# Vim-style navigation profile
+[profiles.vim]
+border_color = 0x50FA7B
+"ctrl+h" = "focus_left"
+"ctrl+j" = "focus_down"
+"ctrl+k" = "focus_up"
+"ctrl+l" = "focus_right"
+"ctrl+shift+\\" = "split_vertical"
+"ctrl+shift+-" = "split_horizontal"
+
+# Standard profile
+[profiles.default]
+border_color = 0xBD93F9
+"ctrl+shift+c" = "copy"
+"ctrl+shift+v" = "paste"
+"ctrl+shift+\\" = "split_vertical"
+"ctrl+shift+-" = "split_horizontal"
+```
+
+**Switching Profiles:**
+- Ctrl+Shift+P: Cycle to next profile
+- Ctrl+Alt+1-9: Switch to profile by index (sorted alphabetically, "default" first)
+- Profile switches are pane-scoped and persist until changed
+
+**Notes:**
+- The `"default"` profile always exists (even if not explicitly defined in config)
+- Profile names are sorted alphabetically for indexed switching, with "default" always first
+- Disabling a keybind in a profile (`"ctrl+c" = "none"`) prevents fallback to global keybinds
+- App-level actions (NewTab, CloseTab, NextTab, PrevTab, Tab1-9, ToggleHelp, ReloadConfig, CycleProfile, SwitchToProfile1-9) always use global keybinds first
 
 ## Minimal examples
 

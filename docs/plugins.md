@@ -41,6 +41,7 @@ Plugins in `~/.config/yatmux/plugins/` are loaded automatically.
 - `close_tab` - Close tab
 - `set_tab_title` - Rename tab
 - `set_tab_cwd` / `set_pane_cwd` - Change directory
+- `set_pane_profile` - Change pane's active profile
 - `send_text` - Send keys to terminal
 
 ### State Commands
@@ -65,6 +66,8 @@ Plugins receive events as JSON:
 - `prompt_response` - User answered prompt
 - `state_response` - App sent state
 - `clipboard_response` - Clipboard contents
+- `profile_changed` - Pane profile was switched
+- `pane_split`, `pane_closed`, `pane_focus_changed` - Pane lifecycle events (include profile data)
 
 **Subscribe to events:**
 ```bash
@@ -152,7 +155,7 @@ Response to `prompt`, `confirm`, or `pick` commands.
     "ok": true,               // true if confirmed/submitted, false if canceled
     "value": "user input",    // text entered (prompts) or selected item (pick) or empty (confirms)
     "index": 0,               // (pick only) index of selected item
-    "kind": "prompt",         // type: "prompt", "confirm", or "pick"
+    "kind": "input",          // type: "input", "confirm", or "pick"
     "reason": "escape"        // (optional) cancellation reason if ok=false
   }
 }
@@ -186,11 +189,17 @@ Response to `request_state` command. Provides complete application state.
         "title": "main",
         "focused_pane": 2,
         "panes": [1, 2, 3],
-        "cwd": "/home/user",  // focused pane's cwd
-        "pane_cwds": {        // per-pane working directories
+        "cwd": "/home/user",       // focused pane's cwd
+        "profile": "default",      // focused pane's active profile
+        "pane_cwds": {             // per-pane working directories
           "1": "/home/user/project1",
           "2": "/home/user/project2",
           "3": "/home/user/project3"
+        },
+        "pane_profiles": {         // per-pane active profiles
+          "1": "default",
+          "2": "vim",
+          "3": "default"
         }
       }
     ]
@@ -206,7 +215,9 @@ Response to `request_state` command. Provides complete application state.
 | `focused_pane` | number | ID of currently focused pane in this tab |
 | `panes` | number[] | List of all pane IDs in this tab |
 | `cwd` | string | Working directory of focused pane |
+| `profile` | string | Active profile of focused pane |
 | `pane_cwds` | object | Map of pane ID to working directory for each pane |
+| `pane_profiles` | object | Map of pane ID to active profile for each pane |
 
 **Example: Find tabs in a specific directory**
 ```bash
@@ -249,6 +260,62 @@ clipboard_text=$(echo "$event_json" | python3 -c 'import json,sys; print(json.lo
 if [ -n "$clipboard_text" ]; then
   # Process clipboard content
   echo "{\"command\":\"toast\",\"message\":\"Clipboard: $clipboard_text\"}"
+fi
+```
+
+#### `profile_changed` Event
+Triggered when a pane's active profile is changed (via keybind or plugin command).
+
+```json
+{
+  "event": "profile_changed",
+  "tab_id": 1,
+  "pane_id": 2,
+  "data": {
+    "profile": "vim",             // new active profile
+    "old_profile": "default",     // previous profile (may be included)
+    "cwd": "/home/user/project"   // current working directory
+  }
+}
+```
+
+**Example: React to profile changes**
+```bash
+event_json="${YATMUX_PLUGIN_EVENT:-$(cat)}"
+event=$(echo "$event_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["event"])')
+
+if [ "$event" = "profile_changed" ]; then
+  profile=$(echo "$event_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["profile"])')
+  echo "{\"command\":\"toast\",\"message\":\"Switched to $profile profile\"}"
+fi
+```
+
+#### Pane Lifecycle Events
+Events like `pane_split`, `pane_closed`, and `pane_focus_changed` now include profile information in their data:
+
+```json
+{
+  "event": "pane_focus_changed",
+  "tab_id": 1,
+  "pane_id": 2,
+  "data": {
+    "cwd": "/home/user/project",
+    "profile": "vim",            // active profile of the pane
+    "direction": "left"          // (pane_focus_changed only)
+  }
+}
+```
+
+**Example: Track profiles across panes**
+```bash
+# Subscribe to pane events
+echo '{"command":"subscribe","events":["pane_focus_changed","pane_split","profile_changed"]}'
+
+# In event handler:
+if [[ "$event" =~ ^pane_ ]] || [ "$event" = "profile_changed" ]; then
+  pane_id=$(echo "$event_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["pane_id"])')
+  profile=$(echo "$event_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["profile"])')
+  echo "Pane $pane_id is using profile: $profile" >&2
 fi
 ```
 
