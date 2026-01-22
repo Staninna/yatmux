@@ -13,6 +13,7 @@ pub struct Config {
     pub font: FontConfig,
     pub pane: PaneConfig,
     pub keybinds: KeybindConfig,
+    pub profiles: ProfilesConfig,
     pub plugins: PluginConfig,
 
     pub ui: UiConfig,
@@ -32,6 +33,7 @@ impl Default for Config {
             font: FontConfig::default(),
             pane: PaneConfig::default(),
             keybinds: KeybindConfig::default(),
+            profiles: ProfilesConfig::default(),
             plugins: PluginConfig::default(),
             ui: UiConfig::default(),
             interaction: InteractionConfig::default(),

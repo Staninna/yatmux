@@ -15,6 +15,7 @@ mod load;
 mod merge;
 mod pane;
 mod plugins;
+mod profile;
 mod serde_hex;
 mod shell_integration;
 mod terminal;
@@ -31,6 +32,7 @@ pub use interaction::InteractionConfig;
 pub use keybind::{Keybind, KeybindAction, KeybindConfig, PluginKeybind};
 pub use pane::PaneConfig;
 pub use plugins::PluginConfig;
+pub use profile::{ProfileDefinition, ProfilesConfig};
 pub use shell_integration::{ShadowPromptMode, ShellIntegrationConfig, TabTitleSource};
 pub use terminal::TerminalConfig;
 pub use theme::ThemeConfig;
@@ -40,9 +42,6 @@ pub use ui::{
 };
 pub use window::WindowConfig;
 
-use std::fs;
-use std::path::{Path, PathBuf};
-
 use serde::{Deserialize, Serialize};
 
 use crate::constants::{
@@ -51,4 +50,4 @@ use crate::constants::{
 };
 
 // Make serde helper modules available for `#[serde(with = "...")]` in submodules.
-use serde_hex::{hex_color, hex_color_opt, hex_palette_opt};
+use serde_hex::{hex_color, hex_palette_opt};
